@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HIKOBAYU｜今日のフォローリスト</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+      background: #f8faf8;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    /* ヘッダー */
+    .header {
+      background: #fff;
+      border-bottom: 2px solid #d4e8d0;
+      padding: 20px 24px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header h1 {
+      font-size: 20px;
+      color: #2d5a27;
+      font-weight: 700;
+    }
+    .header-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 6px;
+      font-size: 14px;
+      color: #666;
+    }
+    .header-actions { display: flex; gap: 8px; }
+    .header-actions button {
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #555;
+    }
+    .header-actions button:hover { background: #f0f0f0; }
+
+    /* メインコンテンツ */
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px 16px;
+    }
+
+    /* ローディング */
+    .loading {
+      text-align: center;
+      padding: 60px 0;
+      color: #888;
+      font-size: 15px;
+    }
+    .loading .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #e0e0e0;
+      border-top-color: #5a9e4b;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 案件カード */
+    .card {
+      background: #fff;
+      border: 1px solid #e0e8de;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #2d5a27;
+    }
+    .card-badges { display: flex; gap: 6px; flex-shrink: 0; }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-見込み段階 { background: #e8e8e8; color: #555; }
+    .badge-提案済み   { background: #dbeafe; color: #2563eb; }
+    .badge-検討中     { background: #fef3c7; color: #d97706; }
+    .badge-反応待ち   { background: #ffe4e4; color: #c0392b; }
+    .badge-反応なし   { background: #f0f0f0; color: #999; }
+    .badge-industry   { background: #f3e8ff; color: #7c3aed; }
+
+    /* コンテキスト入力エリア */
+    .context-section {
+      padding: 10px 20px 0;
+      border-top: 1px solid #f0f0f0;
+    }
+    .context-section label {
+      font-size: 12px;
+      color: #888;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .context-section label span {
+      background: #f0f7ee;
+      color: #5a9e4b;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 4px;
+    }
+    .context-textarea {
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      line-height: 1.6;
+      resize: vertical;
+      min-height: 54px;
+      font-family: inherit;
+      color: #444;
+    }
+    .context-textarea:focus {
+      outline: none;
+      border-color: #5a9e4b;
+      box-shadow: 0 0 0 2px rgba(90,158,75,0.15);
+    }
+    .btn-regen {
+      background: #f0f7ee;
+      color: #2d5a27;
+      border: 1px solid #b6d9b0;
+    }
+
+    .card-info {
+      padding: 12px 20px;
+      font-size: 13px;
+      color: #666;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .card-info span { white-space: nowrap; }
+
+    /* メールセクション */
+    .mail-section {
+      padding: 16px 20px;
+      border-top: 1px solid #f0f0f0;
+    }
+    .mail-section.generating {
+      text-align: center;
+      padding: 24px;
+      color: #888;
+    }
+    .mail-subject {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 4px;
+    }
+    .mail-subject-input {
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 14px;
+      margin-bottom: 8px;
+      font-family: inherit;
+    }
+    .mail-body-textarea {
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      min-height: 160px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    .mail-subject-input:focus, .mail-body-textarea:focus {
+      outline: none;
+      border-color: #5a9e4b;
+      box-shadow: 0 0 0 2px rgba(90,158,75,0.15);
+    }
+
+    /* アクションボタン */
+    .card-actions {
+      padding: 12px 20px 16px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-gmail {
+      background: #4285f4;
+      color: #fff;
+    }
+    .btn-done {
+      background: #5a9e4b;
+      color: #fff;
+    }
+    .btn-done:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .btn-done.completed {
+      background: #e0e0e0;
+      color: #888;
+    }
+
+    /* 空状態 */
+    .empty {
+      text-align: center;
+      padding: 80px 20px;
+      color: #888;
+    }
+    .empty h2 { font-size: 18px; margin-bottom: 8px; color: #5a9e4b; }
+
+    /* レスポンシブ */
+    @media (max-width: 600px) {
+      .header { padding: 14px 16px; }
+      .header h1 { font-size: 17px; }
+      .card-header { flex-direction: column; }
+      .card-actions { flex-direction: column; }
+      .btn { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>HIKOBAYU 今日のフォローリスト</h1>
+    <div class="header-meta">
+      <span id="dateInfo"></span>
+      <div class="header-actions">
+        <button onclick="location.reload()">&#x1f504; 更新</button>
+        <button onclick="window.open('https://www.notion.so/3048d9485aa9804a8d3dc13b01c2394e')">&#x1f4ca; Notionで見る</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container" id="main">
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      案件を読み込み中...
+    </div>
+  </div>
+
+<script>
+// --- ユーティリティ ---
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  const days = ['日','月','火','水','木','金','土'];
+  return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${days[d.getDay()]}）`;
+}
+
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().split('T')[0];
+}
+
+function daysBetween(dateStr1, dateStr2) {
+  if (!dateStr1 || !dateStr2) return null;
+  const d1 = new Date(dateStr1 + 'T00:00:00');
+  const d2 = new Date(dateStr2 + 'T00:00:00');
+  return Math.floor((d2 - d1) / (1000 * 60 * 60 * 24));
+}
+
+// --- Notionプロパティ抽出 ---
+function extractProps(page) {
+  const p = page.properties;
+  return {
+    id: page.id,
+    name: p['案件名']?.title?.[0]?.plain_text || '（無題）',
+    email: p['メールアドレス']?.email || '',
+    industry: (p['営業属性']?.multi_select || [])[0]?.name || '',
+    memo: p['初回接触メモ']?.rich_text?.[0]?.plain_text || '',
+    status: (p['ステータス']?.multi_select || []).map(s => s.name),
+    followDate: p['次回フォロー日']?.date?.start || '',
+    nextAction: p['次のアクション']?.rich_text?.[0]?.plain_text || '',
+    contact: p['担当者']?.rich_text?.[0]?.plain_text || '',
+    sampleDate: p['サンプル送付日']?.date?.start || '',
+  };
+}
+
+// --- Gmailリンク生成 ---
+function createGmailLink(to, subject, body) {
+  const params = new URLSearchParams({ to, su: subject, body });
+  return `https://mail.google.com/mail/?view=cm&${params.toString()}`;
+}
+
+// --- ステータスに応じた次回フォロー日を計算 ---
+function calcNextFollow(status) {
+  const t = today();
+  const s = (status || [])[0] || '';
+  if (s === '見込み段階') return { date: addDays(t, 5), action: 'フォローメール送信', status: null };
+  if (s === '提案済み')   return { date: addDays(t, 7), action: '返答確認・次回提案', status: null };
+  if (s === '検討中')     return { date: addDays(t, 7), action: '検討状況の確認',     status: null };
+  if (s === '反応待ち')   return { date: addDays(t, 10), action: '再アプローチ',       status: null };
+  return { date: addDays(t, 7), action: 'フォロー継続', status: null };
+}
+
+// --- カードHTML生成 ---
+function renderCard(item, index) {
+  const statusName = item.status[0] || '';
+  const statusBadge = statusName ? `<span class="badge badge-${statusName}">${statusName}</span>` : '';
+  const indBadge = item.industry ? `<span class="badge badge-industry">${item.industry}</span>` : '';
+
+  return `
+    <div class="card" id="card-${index}">
+      <div class="card-header">
+        <span class="card-title">${item.name}</span>
+        <div class="card-badges">${statusBadge}${indBadge}</div>
+      </div>
+      <div class="card-info">
+        ${item.contact ? `<span>担当：${item.contact}様</span>` : ''}
+        ${item.email ? `<span>&#x1f4e7; ${item.email}</span>` : ''}
+        ${item.nextAction ? `<span>&#x1f4cc; ${item.nextAction}</span>` : ''}
+        ${item.memo ? `<span>&#x1f4dd; ${item.memo}</span>` : ''}
+        ${item.followDate ? `<span>&#x1f4c5; フォロー：${item.followDate}</span>` : ''}
+      </div>
+      <div class="context-section">
+        <label>ミーティングメモ・補足コンテキスト <span>任意</span></label>
+        <textarea class="context-textarea" id="context-${index}" placeholder="例：先週電話で話した。担当者が変わった。競合他社も検討中とのこと…"></textarea>
+      </div>
+      <div class="mail-section generating" id="mail-${index}">
+        <div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 6px;"></div>
+        メール文を生成中...
+      </div>
+      <div class="card-actions" id="actions-${index}" style="display:none;"></div>
+    </div>
+  `;
+}
+
+// --- メール生成後にカードを更新 ---
+function renderMailSection(index, item, subject, body) {
+  const mailEl = document.getElementById(`mail-${index}`);
+  mailEl.classList.remove('generating');
+  mailEl.innerHTML = `
+    <div class="mail-subject">件名：</div>
+    <input class="mail-subject-input" id="subject-${index}" value="${escapeAttr(subject)}">
+    <textarea class="mail-body-textarea" id="body-${index}">${escapeHtml(body)}</textarea>
+  `;
+
+  const actionsEl = document.getElementById(`actions-${index}`);
+  actionsEl.style.display = 'flex';
+  actionsEl.innerHTML = `
+    <a class="btn btn-gmail" id="gmail-${index}" href="#" target="_blank"
+       onclick="this.href=createGmailLink('${escapeAttr(item.email)}', document.getElementById('subject-${index}').value, document.getElementById('body-${index}').value)">
+      &#x1f4e7; Gmailで開く
+    </a>
+    <button class="btn btn-regen" onclick="regenerateMail(${index})">
+      &#x1f504; 再生成
+    </button>
+    <button class="btn btn-done" id="done-${index}" onclick="markDone(${index})">
+      &#x2705; 送信済み
+    </button>
+  `;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escapeAttr(str) {
+  return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// --- 送信済みボタン ---
+let caseData = [];
+
+async function generateMail(index) {
+  const item = caseData[index];
+  const extraContext = document.getElementById(`context-${index}`)?.value || '';
+  const mailEl = document.getElementById(`mail-${index}`);
+  mailEl.className = 'mail-section generating';
+  mailEl.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 6px;"></div>メール文を生成中...`;
+  document.getElementById(`actions-${index}`).style.display = 'none';
+
+  try {
+    const res = await fetch('/api/claude/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        caseInfo: {
+          name: item.name,
+          contact: item.contact,
+          industry: item.industry,
+          status: item.status,
+          nextAction: item.nextAction,
+          memo: item.memo,
+          sampleDate: item.sampleDate,
+          extraContext,
+          today: today()
+        }
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*"subject"[\s\S]*"body"[\s\S]*\}/);
+    if (jsonMatch) {
+      const mail = JSON.parse(jsonMatch[0]);
+      renderMailSection(index, item, mail.subject, mail.body);
+    } else {
+      throw new Error('メール生成結果のパースに失敗');
+    }
+  } catch (err) {
+    mailEl.classList.remove('generating');
+    mailEl.innerHTML = `<div style="color:#c00;padding:8px;">メール生成エラー: ${err.message}</div>`;
+  }
+}
+
+async function regenerateMail(index) {
+  await generateMail(index);
+}
+
+async function markDone(index) {
+  const item = caseData[index];
+  const btn = document.getElementById(`done-${index}`);
+  btn.disabled = true;
+  btn.textContent = '更新中...';
+
+  const next = calcNextFollow(item.status);
+
+  try {
+    const body = {};
+    if (next.date) body.nextFollowDate = next.date;
+    if (next.action) body.nextAction = next.action;
+    if (next.status) body.status = next.status;
+
+    const res = await fetch(`/api/notion/update/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) throw new Error('更新に失敗しました');
+
+    btn.classList.add('completed');
+    btn.innerHTML = `&#x2705; 完了（次回：${next.date}）`;
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '✅ 送信済み（再試行）';
+    alert('Notion更新エラー: ' + err.message);
+  }
+}
+
+// --- 初期化 ---
+async function init() {
+  // ヘッダー日付
+  document.getElementById('dateInfo').textContent =
+    `${formatDate(today())}｜読み込み中...`;
+
+  try {
+    // Notion案件取得
+    const res = await fetch('/api/notion/query', { method: 'POST' });
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    const pages = data.results || [];
+    caseData = pages.map(p => extractProps(p));
+
+    document.getElementById('dateInfo').textContent =
+      `${formatDate(today())}｜今日の対応：${caseData.length}件`;
+
+    const main = document.getElementById('main');
+
+    if (caseData.length === 0) {
+      main.innerHTML = `
+        <div class="empty">
+          <h2>今日のフォロー案件はありません</h2>
+          <p>お疲れ様です！ゆっくり森の時間を過ごしましょう。</p>
+        </div>
+      `;
+      return;
+    }
+
+    // カード描画
+    main.innerHTML = caseData.map((item, i) => renderCard(item, i)).join('');
+
+    // 各案件のメール生成（並列実行）
+    await Promise.all(caseData.map((_, i) => generateMail(i)));
+
+  } catch (err) {
+    document.getElementById('main').innerHTML = `
+      <div class="empty">
+        <h2>読み込みエラー</h2>
+        <p>${err.message}</p>
+        <p style="margin-top:12px;"><button onclick="location.reload()" class="btn btn-done">再試行</button></p>
+      </div>
+    `;
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>
