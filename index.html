@@ -463,6 +463,7 @@
       <div class="header-actions">
         <button onclick="location.reload()">&#x1f504; 更新</button>
         <button onclick="openAttachSettings()">&#x1f4ce; 資料管理</button>
+        <button onclick="openTemplateSettings()">&#x1f4dd; 定型文管理</button>
         <button onclick="window.open('https://www.notion.so/3048d9485aa9804a8d3dc13b01c2394e')">&#x1f4ca; Notion</button>
       </div>
     </div>
@@ -525,6 +526,21 @@
     </div>
   </div>
 
+  <!-- 定型文テンプレート管理モーダル -->
+  <div class="modal-overlay" id="templateModal">
+    <div class="modal" style="max-width:600px;">
+      <h2>&#x1f4dd; 定型文テンプレート</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px;">登録した定型文は、各カードの入力欄にワンクリックで挿入できます。</p>
+      <div id="templateModalList"></div>
+      <div class="modal-add">
+        <input id="newTemplateName" placeholder="テンプレート名（例：新商品ご案内）">
+        <textarea id="newTemplateText" placeholder="定型文の本文を入力…" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 8px;font-size:13px;min-height:80px;resize:vertical;font-family:inherit;margin-bottom:6px;"></textarea>
+        <input id="newTemplateImage" placeholder="画像URL（任意・Google DriveやShopifyなど）">
+        <button onclick="addTemplate()">追加</button>
+      </div>
+      <button class="modal-close" onclick="closeTemplateSettings()">閉じる</button>
+    </div>
+  </div>
 
 <script>
 // === グローバル状態 ===
@@ -533,6 +549,7 @@ let senderAccounts = [];
 let attachments = [];
 let currentFilter = localStorage.getItem('hikobayuFilter') || 'all';
 let originalMails = {}; // index -> { subject, body } 生成時の原文を保持
+let templates = []; // 定型文テンプレート
 
 // 取引先タブ用
 let currentTab = location.hash === '#clients' ? 'clients' : 'sales';
@@ -663,8 +680,9 @@ function renderCard(item, index) {
         ${item.followDate ? `<span>&#x1f4c5; フォロー：${item.followDate}</span>` : ''}
       </div>
       <div class="context-section">
-        <label>ミーティングメモ・補足コンテキスト <span>任意</span></label>
+        <label>生成前に入れたい情報をここに入力 <span>任意</span></label>
         <textarea class="context-textarea" id="context-${index}" placeholder="例：先週電話で話した。担当者が変わった。競合他社も検討中とのこと…"></textarea>
+        ${renderTemplateChips('context-' + index)}
       </div>
       <div class="attach-section" id="attach-panel-${index}">
         <label>&#x1f4ce; 添付資料（クリックで選択）</label>
@@ -798,6 +816,25 @@ async function markDone(index) {
     }
   }
 
+  // メール履歴をNotionページに追記
+  if (editedSubject && editedBody) {
+    const sender = getSelectedSender();
+    try {
+      await fetch(`/api/notion/append-email/${item.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: editedSubject,
+          body: editedBody,
+          senderName: sender.signature,
+          date: today(),
+        })
+      });
+    } catch (e) {
+      console.warn('メール履歴保存エラー:', e);
+    }
+  }
+
   try {
     const body = {};
     if (next.date) body.nextFollowDate = next.date;
@@ -876,6 +913,88 @@ async function deleteAttachment(id) {
   await fetch(`/api/attachments/${id}`, { method: 'DELETE' });
   attachments = attachments.filter(a => a.id !== id);
   renderAttachModal();
+}
+
+// === 定型文テンプレート管理 ===
+function openTemplateSettings() {
+  renderTemplateModal();
+  document.getElementById('templateModal').classList.add('show');
+}
+
+function closeTemplateSettings() {
+  document.getElementById('templateModal').classList.remove('show');
+}
+
+function renderTemplateModal() {
+  const list = document.getElementById('templateModalList');
+  if (templates.length === 0) {
+    list.innerHTML = '<p style="color:#aaa;font-size:13px;padding:8px 0;">まだ定型文が登録されていません</p>';
+    return;
+  }
+  list.innerHTML = templates.map(t => `
+    <div class="modal-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="modal-item-info">
+          <div class="name">${escapeHtml(t.name)}</div>
+        </div>
+        <div class="modal-item-actions">
+          <button class="del" onclick="deleteTemplate('${t.id}')">削除</button>
+        </div>
+      </div>
+      ${t.imageUrl ? `<img src="${escapeAttr(t.imageUrl)}" style="max-width:100%;max-height:120px;object-fit:contain;border-radius:4px;border:1px solid #eee;">` : ''}
+      <div style="font-size:12px;color:#666;white-space:pre-wrap;background:#f8faf8;padding:8px;border-radius:4px;max-height:100px;overflow-y:auto;">${escapeHtml(t.text)}</div>
+    </div>
+  `).join('');
+}
+
+async function addTemplate() {
+  const name = document.getElementById('newTemplateName').value.trim();
+  const text = document.getElementById('newTemplateText').value.trim();
+  const imageUrl = document.getElementById('newTemplateImage').value.trim();
+  if (!name || !text) return alert('テンプレート名と本文を入力してください');
+
+  const res = await fetch('/api/templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, text, imageUrl })
+  });
+  const item = await res.json();
+  templates.push(item);
+  renderTemplateModal();
+  document.getElementById('newTemplateName').value = '';
+  document.getElementById('newTemplateText').value = '';
+  document.getElementById('newTemplateImage').value = '';
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('この定型文を削除しますか？')) return;
+  await fetch(`/api/templates/${id}`, { method: 'DELETE' });
+  templates = templates.filter(t => t.id !== id);
+  renderTemplateModal();
+}
+
+// 定型文をテキストエリアに挿入
+function insertTemplate(templateId, textareaId) {
+  const t = templates.find(t => t.id === templateId);
+  if (!t) return;
+  const textarea = document.getElementById(textareaId);
+  if (!textarea) return;
+  const current = textarea.value;
+  textarea.value = current ? current + '\n\n' + t.text : t.text;
+  textarea.focus();
+}
+
+// 定型文チップHTML生成
+function renderTemplateChips(textareaId) {
+  if (templates.length === 0) return '';
+  return `
+    <div style="margin-top:6px;">
+      <label style="font-size:11px;color:#999;">定型文を挿入：</label>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;">
+        ${templates.map(t => `<span class="attach-chip" onclick="insertTemplate('${t.id}','${textareaId}')" title="${escapeAttr(t.text.slice(0,100))}">&#x1f4dd; ${escapeHtml(t.name)}</span>`).join('')}
+      </div>
+    </div>
+  `;
 }
 
 // === タブ切り替え ===
@@ -972,8 +1091,9 @@ function renderClientCard(item, index) {
       <div class="context-section">
         <label>フォロー種別（複数選択可）</label>
         <div class="attach-list" id="client-types-${index}" style="margin-bottom:8px;">${followTypeHtml}</div>
-        <label>補足コンテキスト <span>任意</span></label>
+        <label>生成前に入れたい情報をここに入力 <span>任意</span></label>
         <textarea class="context-textarea" id="client-context-${index}" placeholder="例：先月の注文が好評だった、新商品を案内したい…"></textarea>
+        ${renderTemplateChips('client-context-' + index)}
       </div>
       <div class="attach-section" id="client-attach-panel-${index}">
         <label>&#x1f4ce; 添付資料（クリックで選択）</label>
@@ -1092,6 +1212,28 @@ async function markClientDone(index) {
   const selectedTypes = Array.from(document.querySelectorAll(`#client-types-${index} .attach-chip.selected`)).map(el => el.dataset.type);
   const nextDate = addDays(today(), 30); // 取引先は長めのサイクル
 
+  // メール履歴をNotionページに追記
+  const subjectEl = document.getElementById(`client-subject-${index}`);
+  const bodyEl = document.getElementById(`client-body-${index}`);
+  if (subjectEl && bodyEl) {
+    const senderSel = document.getElementById('clientSenderSelect');
+    const sender = senderAccounts.find(s => s.id === senderSel.value) || senderAccounts[1];
+    try {
+      await fetch(`/api/notion/append-email/${item.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: subjectEl.value,
+          body: bodyEl.value,
+          senderName: sender.signature,
+          date: today(),
+        })
+      });
+    } catch (e) {
+      console.warn('メール履歴保存エラー:', e);
+    }
+  }
+
   try {
     const res = await fetch(`/api/clients/update/${item.id}`, {
       method: 'PATCH',
@@ -1121,14 +1263,16 @@ async function initClients() {
   document.getElementById('dateInfo').textContent = `${formatDate(today())}｜読み込み中...`;
 
   try {
-    // 送信者・添付資料を取得（まだ未取得の場合）
+    // 送信者・添付資料・定型文を取得（まだ未取得の場合）
     if (senderAccounts.length === 0) {
-      const [sendersRes, attachRes] = await Promise.all([
+      const [sendersRes, attachRes, templatesRes] = await Promise.all([
         fetch('/api/senders'),
         fetch('/api/attachments'),
+        fetch('/api/templates'),
       ]);
       senderAccounts = await sendersRes.json();
       attachments = await attachRes.json();
+      templates = await templatesRes.json();
     }
 
     // 取引先用送信者ドロップダウン
@@ -1192,13 +1336,15 @@ async function init() {
   });
 
   try {
-    // 送信者一覧・添付資料を並列取得
-    const [sendersRes, attachRes] = await Promise.all([
+    // 送信者一覧・添付資料・定型文を並列取得
+    const [sendersRes, attachRes, templatesRes] = await Promise.all([
       fetch('/api/senders'),
       fetch('/api/attachments'),
+      fetch('/api/templates'),
     ]);
     senderAccounts = await sendersRes.json();
     attachments = await attachRes.json();
+    templates = await templatesRes.json();
 
     // 送信者ドロップダウン構築
     const senderSel = document.getElementById('senderSelect');

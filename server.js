@@ -38,6 +38,19 @@ function saveAttachments(data) {
   fs.writeFileSync(ATTACHMENTS_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
+// --- 定型文テンプレートの管理 ---
+const TEMPLATES_FILE = path.join(__dirname, 'templates.json');
+
+function loadTemplates() {
+  try {
+    return JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf8'));
+  } catch { return []; }
+}
+
+function saveTemplates(data) {
+  fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
 // --- メール修正履歴の管理 ---
 const HISTORY_FILE = path.join(__dirname, 'email-history.json');
 
@@ -82,6 +95,35 @@ app.delete('/api/attachments/:id', (req, res) => {
   let list = loadAttachments();
   list = list.filter(a => a.id !== req.params.id);
   saveAttachments(list);
+  res.json({ ok: true });
+});
+
+// --- API: 定型文テンプレート CRUD ---
+app.get('/api/templates', (req, res) => {
+  res.json(loadTemplates());
+});
+
+app.post('/api/templates', (req, res) => {
+  const list = loadTemplates();
+  const item = { id: Date.now().toString(), ...req.body };
+  list.push(item);
+  saveTemplates(list);
+  res.json(item);
+});
+
+app.put('/api/templates/:id', (req, res) => {
+  const list = loadTemplates();
+  const idx = list.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  list[idx] = { ...list[idx], ...req.body };
+  saveTemplates(list);
+  res.json(list[idx]);
+});
+
+app.delete('/api/templates/:id', (req, res) => {
+  let list = loadTemplates();
+  list = list.filter(t => t.id !== req.params.id);
+  saveTemplates(list);
   res.json({ ok: true });
 });
 
@@ -388,6 +430,62 @@ app.patch('/api/clients/update/:pageId', async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('Clients update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Notion: ページにメール送信履歴を追記 ---
+app.post('/api/notion/append-email/:pageId', async (req, res) => {
+  try {
+    const { pageId } = req.params;
+    const { subject, body, senderName, date } = req.body;
+
+    // 本文は300字に制限
+    const trimmedBody = body.length > 300 ? body.slice(0, 300) + '...' : body;
+
+    const children = [
+      { object: 'block', type: 'divider', divider: {} },
+      {
+        object: 'block', type: 'heading_3',
+        heading_3: { rich_text: [{ type: 'text', text: { content: `📧 送信メール（${date}）` } }] }
+      },
+      {
+        object: 'block', type: 'paragraph',
+        paragraph: { rich_text: [
+          { type: 'text', text: { content: '件名: ' }, annotations: { bold: true } },
+          { type: 'text', text: { content: subject } }
+        ] }
+      },
+      {
+        object: 'block', type: 'paragraph',
+        paragraph: { rich_text: [{ type: 'text', text: { content: trimmedBody } }] }
+      },
+      {
+        object: 'block', type: 'paragraph',
+        paragraph: { rich_text: [
+          { type: 'text', text: { content: `送信者: ${senderName}` }, annotations: { color: 'gray' } }
+        ] }
+      },
+    ];
+
+    const response = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ children })
+    });
+
+    const data = await response.json();
+    if (data.object === 'error') {
+      console.error('Notion append error:', data);
+      return res.status(400).json({ error: data.message });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Notion append-email error:', err);
     res.status(500).json({ error: err.message });
   }
 });
