@@ -611,6 +611,9 @@ function isClientHidden(clientId) {
 // 送信完了後の一時データ（index → payload）
 const _pendingSentData = {};
 
+// 再送・追加送信で強制表示するclientIdセット（Notionフィルタも上書き）
+const _forceShowClients = new Set();
+
 
 // === ユーティリティ ===
 function formatDate(dateStr) {
@@ -1514,6 +1517,8 @@ function renderSentHistoryCard(item) {
 async function resendToClient(clientId) {
   // 非表示リストから削除して再表示できるようにする
   setHiddenClients(getHiddenClients().filter(h => h.clientId !== clientId));
+  // Notionの送信済みフィルタも上書きするよう強制表示セットに追加
+  _forceShowClients.add(clientId);
   hideSentHistory();
   clientChannel = 'all';
   clientFollowFilter = 'all';
@@ -1582,7 +1587,10 @@ async function initClients() {
       notionSentIds = new Set(sentData.clientIds || []);
     } catch(e) { console.warn('sent-today取得失敗（フィルタをスキップ）', e); }
     const localHiddenIds = new Set(getHiddenClients().map(h => h.clientId));
-    const hiddenIds = new Set([...notionSentIds, ...localHiddenIds]);
+    // _forceShowClients（再送ボタン押下）はNotion・localStorageフィルタを上書き
+    const hiddenIds = new Set(
+      [...notionSentIds, ...localHiddenIds].filter(id => !_forceShowClients.has(id))
+    );
 
     clientData = pages.map(p => extractClientProps(p)).filter(item => !hiddenIds.has(item.id));
 
