@@ -125,7 +125,9 @@ app.post('/api/create-gmail-draft', async (req, res) => {
       requestBody: { message: { raw } },
     });
 
-    const draftUrl = `https://mail.google.com/mail/#drafts/${draft.data.message.id}`;
+    // draft.data.id = 下書きID（特定の下書きを直接開くのに必要）
+    // draft.data.message.id = メッセージID（下書き一覧にしか飛ばない）
+    const draftUrl = `https://mail.google.com/mail/#drafts/${draft.data.id}`;
     res.json({ ok: true, draftUrl });
   } catch (err) {
     console.error('create-gmail-draft error:', err);
