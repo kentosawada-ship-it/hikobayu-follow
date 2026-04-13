@@ -443,6 +443,34 @@
     }
 
 
+    /* 送信済みカード */
+    .card.card-done {
+      opacity: 0.55;
+      border-color: #ccc;
+      background: #f7f7f7;
+    }
+    .card.card-done .card-title { color: #888; }
+    .card-done-banner {
+      padding: 8px 20px;
+      background: #e8f5e3;
+      color: #2d5a27;
+      font-size: 13px;
+      font-weight: 600;
+      border-top: 1px solid #b6d9b0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .card.card-done .card-collapsible { display: none; }
+
+    .btn-send-html {
+      background: #2d5a27;
+      color: #fff;
+      flex: 1;
+      justify-content: center;
+      font-size: 15px;
+    }
+
     /* レスポンシブ */
     @media (max-width: 600px) {
       .header { padding: 14px 16px; }
@@ -462,30 +490,13 @@
       <span id="dateInfo"></span>
       <div class="header-actions">
         <button onclick="location.reload()">&#x1f504; 更新</button>
+        <button onclick="showSentHistory()" id="btn-sent-history">&#x1f4ec; 送信済み一覧</button>
         <button onclick="openAttachSettings()">&#x1f4ce; 資料管理</button>
         <button onclick="openTemplateSettings()">&#x1f4dd; 定型文管理</button>
-        <button onclick="window.open('https://www.notion.so/3048d9485aa9804a8d3dc13b01c2394e')">&#x1f4ca; Notion</button>
+        <button onclick="window.open('https://www.notion.so/748fc885879649a28d91aa1c131f8b58')">&#x1f4ca; Notion</button>
       </div>
     </div>
-    <div class="tab-nav">
-      <button class="tab-btn active" data-tab="sales" onclick="switchTab('sales')">&#x1f579; 営業フォロー</button>
-      <button class="tab-btn" data-tab="clients" onclick="switchTab('clients')">&#x1f91d; 取引先フォロー</button>
-    </div>
-    <!-- 営業フォロー用フィルター -->
-    <div id="salesFilters">
-      <div class="filter-bar">
-        <label>担当：</label>
-        <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">全件</button>
-        <button class="filter-btn" data-filter="佳代" onclick="setFilter('佳代')">佳代</button>
-        <button class="filter-btn" data-filter="健人" onclick="setFilter('健人')">健人</button>
-      </div>
-      <div class="sender-select-wrap">
-        <label>送信元：</label>
-        <select class="sender-select" id="senderSelect"></select>
-      </div>
-    </div>
-    <!-- 取引先フォロー用フィルター -->
-    <div id="clientFilters" style="display:none;">
+    <div id="clientFilters">
       <div class="client-filter-bar">
         <label>チャネル：</label>
         <button class="filter-btn active" data-channel="all" onclick="setClientChannel('all')">すべて</button>
@@ -493,9 +504,12 @@
         <button class="filter-btn" data-channel="goooods" onclick="setClientChannel('goooods')">goooods</button>
       </div>
       <div class="client-filter-bar" style="margin-top:6px;">
-        <label>状況：</label>
+        <label>ステージ：</label>
         <button class="filter-btn active" data-follow="all" onclick="setClientFollowFilter('all')">すべて</button>
-        <button class="filter-btn" data-follow="未対応" onclick="setClientFollowFilter('未対応')">未対応のみ</button>
+        <button class="filter-btn" data-follow="新規リード" onclick="setClientFollowFilter('新規リード')">新規リード</button>
+        <button class="filter-btn" data-follow="商談中" onclick="setClientFollowFilter('商談中')">商談中</button>
+        <button class="filter-btn" data-follow="取引中" onclick="setClientFollowFilter('取引中')">取引中</button>
+        <button class="filter-btn" data-follow="休眠" onclick="setClientFollowFilter('休眠')">休眠</button>
       </div>
       <div class="sender-select-wrap">
         <label>送信元：</label>
@@ -511,6 +525,18 @@
     </div>
   </div>
 
+  <!-- 送信済み一覧ビュー -->
+  <div id="sent-history-view" style="display:none;">
+    <div class="container">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-top:4px;">
+        <button onclick="hideSentHistory()" style="background:none;border:1px solid #ccc;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">← フォロー一覧へ戻る</button>
+        <h2 style="font-size:16px;font-weight:700;color:#2d5a27;margin:0;">📬 送信済み一覧</h2>
+        <span id="sent-history-count" style="font-size:12px;color:#888;"></span>
+      </div>
+      <div id="sent-history-main"></div>
+    </div>
+  </div>
+
   <!-- 添付資料設定モーダル -->
   <div class="modal-overlay" id="attachModal">
     <div class="modal">
@@ -523,6 +549,23 @@
         <button onclick="addAttachment()">追加</button>
       </div>
       <button class="modal-close" onclick="closeAttachSettings()">閉じる</button>
+    </div>
+  </div>
+
+  <!-- Gmail下書き完了モーダル -->
+  <div class="modal-overlay" id="gmailGuideModal" onclick="if(event.target===this)closeGmailModal()">
+    <div class="modal" style="max-width:400px;text-align:center;">
+      <div style="font-size:40px;margin-bottom:12px;">✅</div>
+      <h2 style="margin-bottom:12px;">下書きを作成しました</h2>
+      <div style="font-size:14px;color:#555;line-height:1.8;margin-bottom:24px;">
+        Gmailで内容を確認して送信してください
+      </div>
+      <button onclick="confirmOpenGmail()" class="btn btn-send-html" style="width:100%;justify-content:center;font-size:15px;padding:14px;margin-bottom:10px;">
+        📨 Gmailで開いて送信を確認する
+      </button>
+      <button onclick="closeGmailModal()" style="width:100%;background:none;border:1px solid #ccc;border-radius:8px;padding:10px;font-size:14px;cursor:pointer;color:#555;">
+        ✕ フォロー一覧に戻る（Gmailは後で）
+      </button>
     </div>
   </div>
 
@@ -542,21 +585,31 @@
     </div>
   </div>
 
+
 <script>
 // === グローバル状態 ===
-let caseData = [];
 let senderAccounts = [];
 let attachments = [];
-let currentFilter = localStorage.getItem('hikobayuFilter') || 'all';
-let originalMails = {}; // index -> { subject, body } 生成時の原文を保持
-let templates = []; // 定型文テンプレート
-
-// 取引先タブ用
-let currentTab = location.hash === '#clients' ? 'clients' : 'sales';
+let templates = [];
 let clientData = [];
 let clientChannel = 'all';
 let clientFollowFilter = 'all';
 let clientOriginalMails = {};
+
+// === localStorage: 送信済み非表示リスト ===
+const LS_HIDDEN_KEY = 'hf_hidden_clients';
+function getHiddenClients() {
+  try { return JSON.parse(localStorage.getItem(LS_HIDDEN_KEY) || '[]'); } catch { return []; }
+}
+function setHiddenClients(list) {
+  localStorage.setItem(LS_HIDDEN_KEY, JSON.stringify(list));
+}
+function isClientHidden(clientId) {
+  return getHiddenClients().some(h => h.clientId === clientId);
+}
+
+// 送信完了後の一時データ（index → payload）
+const _pendingSentData = {};
 
 
 // === ユーティリティ ===
@@ -579,282 +632,43 @@ function escapeAttr(str) {
   return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// === Notionプロパティ抽出 ===
-function extractProps(page) {
-  const p = page.properties;
-  return {
-    id: page.id,
-    name: p['案件名']?.title?.[0]?.plain_text || '（無題）',
-    email: p['メールアドレス']?.email || '',
-    industry: (p['営業属性']?.multi_select || [])[0]?.name || '',
-    memo: p['初回接触メモ']?.rich_text?.[0]?.plain_text || '',
-    status: (p['ステータス']?.multi_select || []).map(s => s.name),
-    followDate: p['次回フォロー日']?.date?.start || '',
-    nextAction: p['次のアクション']?.rich_text?.[0]?.plain_text || '',
-    contact: p['担当者']?.rich_text?.[0]?.plain_text || '',
-    sampleDate: p['サンプル送付日']?.date?.start || '',
-    assignee: (p['責任者']?.people || []).map(u => u.name).join('・') || '',
-  };
-}
-
-// === 担当者フィルター ===
-function setFilter(filter) {
-  currentFilter = filter;
-  localStorage.setItem('hikobayuFilter', filter);
-  document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.filter === filter);
-  });
-  init();
-}
-
-// === 送信元選択 ===
-function getSelectedSender() {
-  const sel = document.getElementById('senderSelect');
-  return senderAccounts.find(s => s.id === sel.value) || senderAccounts[0];
-}
-
-function getSelectedSenderEmail() {
-  return getSelectedSender()?.email || '';
-}
-
-// === Gmailリンク生成 ===
-function createGmailLink(to, subject, body) {
-  const from = getSelectedSenderEmail();
-  const params = new URLSearchParams({ to, su: subject, body });
-  if (from) params.set('from', from);
-  return `https://mail.google.com/mail/?view=cm&${params.toString()}`;
-}
-
-// === 添付資料のリンクをメール本文に追加 ===
-function getSelectedAttachLinks(index) {
-  const chips = document.querySelectorAll(`#attach-panel-${index} .attach-chip.selected`);
-  if (chips.length === 0) return '';
-  let links = '\n\n---\n【添付資料】\n';
-  chips.forEach(chip => {
-    const name = chip.dataset.name;
-    const url = chip.dataset.url;
-    if (url) links += `${name}: ${url}\n`;
-  });
-  return links;
-}
-
-// === ステータスに応じた次回フォロー日 ===
-function calcNextFollow(status) {
-  const t = today();
-  const s = (status || [])[0] || '';
-  if (s === '見込み段階') return { date: addDays(t, 5), action: 'フォローメール送信' };
-  if (s === '提案済み')   return { date: addDays(t, 7), action: '返答確認・次回提案' };
-  if (s === '検討中')     return { date: addDays(t, 7), action: '検討状況の確認' };
-  if (s === '反応待ち')   return { date: addDays(t, 10), action: '再アプローチ' };
-  return { date: addDays(t, 7), action: 'フォロー継続' };
-}
-
-// === カードHTML生成 ===
-function renderCard(item, index) {
-  const statusName = item.status[0] || '';
-  const statusBadge = statusName ? `<span class="badge badge-${statusName}">${statusName}</span>` : '';
-  const indBadge = item.industry ? `<span class="badge badge-industry">${item.industry}</span>` : '';
-  const assigneeBadge = item.assignee ? `<span class="badge badge-assignee">${item.assignee}</span>` : '';
-
-  // 添付資料チップ
-  let attachHtml = '';
-  if (attachments.length > 0) {
-    attachHtml = attachments.map(a =>
-      `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" onclick="this.classList.toggle('selected')" title="${escapeAttr(a.description || '')}">${a.name}</span>`
-    ).join('');
-  } else {
-    attachHtml = '<span class="attach-empty">資料未登録（ヘッダーの「資料管理」から追加）</span>';
-  }
-
-  return `
-    <div class="card" id="card-${index}">
-      <div class="card-header">
-        <span class="card-title">${escapeHtml(item.name)}</span>
-        <div class="card-badges">${assigneeBadge}${statusBadge}${indBadge}</div>
-      </div>
-      <div class="card-info">
-        ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
-        ${item.email ? `<span>&#x1f4e7; ${escapeHtml(item.email)}</span>` : ''}
-        ${item.nextAction ? `<span>&#x1f4cc; ${escapeHtml(item.nextAction)}</span>` : ''}
-        ${item.memo ? `<span>&#x1f4dd; ${escapeHtml(item.memo)}</span>` : ''}
-        ${item.followDate ? `<span>&#x1f4c5; フォロー：${item.followDate}</span>` : ''}
-      </div>
-      <div class="context-section">
-        <label>生成前に入れたい情報をここに入力 <span>任意</span></label>
-        <textarea class="context-textarea" id="context-${index}" placeholder="例：先週電話で話した。担当者が変わった。競合他社も検討中とのこと…"></textarea>
-        ${renderTemplateChips('context-' + index)}
-      </div>
-      <div class="attach-section" id="attach-panel-${index}">
-        <label>&#x1f4ce; 添付資料（クリックで選択）</label>
-        <div class="attach-list">${attachHtml}</div>
-      </div>
-      <div class="mail-section" id="mail-${index}">
-        <button class="btn btn-regen" onclick="generateMail(${index})" style="width:100%;padding:12px;font-size:15px;">&#x2709; メールを生成する</button>
-      </div>
-      <div class="card-actions" id="actions-${index}" style="display:none;"></div>
-    </div>
-  `;
-}
-
-// === メール生成後にカードを更新 ===
-function renderMailSection(index, item, subject, body) {
-  // 原文を保持（学習用）
-  originalMails[index] = { subject, body };
-
-  const mailEl = document.getElementById(`mail-${index}`);
-  mailEl.classList.remove('generating');
-  mailEl.innerHTML = `
-    <div class="mail-subject">件名：</div>
-    <input class="mail-subject-input" id="subject-${index}" value="${escapeAttr(subject)}">
-    <textarea class="mail-body-textarea" id="body-${index}">${escapeHtml(body)}</textarea>
-  `;
-
-  const actionsEl = document.getElementById(`actions-${index}`);
-  actionsEl.style.display = 'flex';
-  actionsEl.innerHTML = `
-    <a class="btn btn-gmail" id="gmail-${index}" href="#" target="_blank"
-       onclick="this.href=buildGmailLink(${index})">
-      &#x1f4e7; Gmailで開く
-    </a>
-    <button class="btn btn-regen" onclick="regenerateMail(${index})">
-      &#x1f504; 再生成
-    </button>
-    <button class="btn btn-done" id="done-${index}" onclick="markDone(${index})">
-      &#x2705; 送信済み
-    </button>
-  `;
-}
-
-// === Gmailリンク構築（添付資料リンク含む） ===
-function buildGmailLink(index) {
-  const item = caseData[index];
-  const subject = document.getElementById(`subject-${index}`).value;
-  const body = document.getElementById(`body-${index}`).value + getSelectedAttachLinks(index);
-  return createGmailLink(item.email, subject, body);
-}
-
-// === メール生成 ===
-async function generateMail(index) {
-  const item = caseData[index];
-  const extraContext = document.getElementById(`context-${index}`)?.value || '';
-  const mailEl = document.getElementById(`mail-${index}`);
-  mailEl.className = 'mail-section generating';
-  mailEl.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 6px;"></div>メール文を生成中...`;
-  document.getElementById(`actions-${index}`).style.display = 'none';
-
-  const sender = getSelectedSender();
-
+// === コンタクト履歴から最新を取得 ===
+async function loadLatestContact(clientId, index) {
   try {
-    const res = await fetch('/api/claude/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        caseInfo: {
-          name: item.name,
-          contact: item.contact,
-          industry: item.industry,
-          status: item.status,
-          nextAction: item.nextAction,
-          memo: item.memo,
-          sampleDate: item.sampleDate,
-          extraContext,
-          today: today()
-        },
-        senderId: sender.id
-      })
-    });
+    const res = await fetch(`/api/contacts/latest/${clientId}`);
     const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-    const jsonMatch = text.match(/\{[\s\S]*"subject"[\s\S]*"body"[\s\S]*\}/);
-    if (jsonMatch) {
-      const mail = JSON.parse(jsonMatch[0]);
-      renderMailSection(index, item, mail.subject, mail.body);
+    const el = document.getElementById(`prev-action-${index}`);
+    if (!el) return;
+    if (data && data.memo) {
+      clientData[index].latestContactMemo = data.memo;
+      el.value = data.memo;
+      el.placeholder = '（記録なし）';
     } else {
-      throw new Error('メール生成結果のパースに失敗');
+      el.value = '';
+      el.placeholder = '（記録なし）';
     }
-  } catch (err) {
-    mailEl.classList.remove('generating');
-    mailEl.innerHTML = `<div style="color:#c00;padding:8px;">メール生成エラー: ${err.message}</div>`;
+  } catch (e) {
+    const el = document.getElementById(`prev-action-${index}`);
+    if (el) { el.value = ''; el.placeholder = '（取得エラー）'; }
   }
 }
 
-async function regenerateMail(index) {
-  await generateMail(index);
+// === メモ展開トグル ===
+function toggleMemo(index) {
+  const full = document.getElementById(`memo-full-${index}`);
+  const toggle = document.getElementById(`memo-toggle-${index}`);
+  if (!full) return;
+  const isOpen = full.style.display !== 'none';
+  full.style.display = isOpen ? 'none' : 'block';
+  if (toggle) toggle.dataset.open = isOpen ? '' : '1';
 }
 
-// === 送信済み（学習データ保存 + Notion更新） ===
-async function markDone(index) {
-  const item = caseData[index];
-  const btn = document.getElementById(`done-${index}`);
-  btn.disabled = true;
-  btn.textContent = '更新中...';
-
-  const next = calcNextFollow(item.status);
-
-  // 学習データ保存: 生成文と編集後の差分
-  const orig = originalMails[index];
-  const editedSubject = document.getElementById(`subject-${index}`).value;
-  const editedBody = document.getElementById(`body-${index}`).value;
-
-  if (orig && (orig.subject !== editedSubject || orig.body !== editedBody)) {
-    try {
-      await fetch('/api/email-history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          caseName: item.name,
-          industry: item.industry,
-          status: item.status,
-          originalSubject: orig.subject,
-          originalBody: orig.body,
-          editedSubject,
-          editedBody,
-        })
-      });
-    } catch (e) {
-      console.warn('学習データ保存エラー:', e);
-    }
-  }
-
-  // メール履歴をNotionページに追記
-  if (editedSubject && editedBody) {
-    const sender = getSelectedSender();
-    try {
-      await fetch(`/api/notion/append-email/${item.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subject: editedSubject,
-          body: editedBody,
-          senderName: sender.signature,
-          date: today(),
-        })
-      });
-    } catch (e) {
-      console.warn('メール履歴保存エラー:', e);
-    }
-  }
-
-  try {
-    const body = {};
-    if (next.date) body.nextFollowDate = next.date;
-    if (next.action) body.nextAction = next.action;
-
-    const res = await fetch(`/api/notion/update/${item.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) throw new Error('更新に失敗しました');
-
-    btn.classList.add('completed');
-    btn.innerHTML = `&#x2705; 完了（次回：${next.date}）`;
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = '送信済み（再試行）';
-    alert('Notion更新エラー: ' + err.message);
-  }
+// === 定型文チップクリック → 定型文テキストエリア更新 ===
+function updateTemplateContext(index) {
+  const chips = document.querySelectorAll(`#template-panel-${index} .attach-chip.selected`);
+  const texts = Array.from(chips).map(el => el.dataset.templateText).filter(Boolean);
+  const ta = document.getElementById(`template-text-${index}`);
+  if (ta) ta.value = texts.join('\n\n');
 }
 
 // === 添付資料設定モーダル ===
@@ -865,8 +679,7 @@ function openAttachSettings() {
 
 function closeAttachSettings() {
   document.getElementById('attachModal').classList.remove('show');
-  // リロードして最新の添付資料をカードに反映
-  init();
+  initClients();
 }
 
 function renderAttachModal() {
@@ -973,45 +786,228 @@ async function deleteTemplate(id) {
   renderTemplateModal();
 }
 
-// 定型文をテキストエリアに挿入
-function insertTemplate(templateId, textareaId) {
-  const t = templates.find(t => t.id === templateId);
-  if (!t) return;
-  const textarea = document.getElementById(textareaId);
-  if (!textarea) return;
-  const current = textarea.value;
-  textarea.value = current ? current + '\n\n' + t.text : t.text;
-  textarea.focus();
+
+// クライアント側 HTML メール構築（server.js の buildHtmlEmail と同一ロジック）
+const CLIENT_ICON_INSTAGRAM = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/instagram_icon_10cd4c36-0d53-4763-87dd-023349ffc59e.svg?v=1775885815';
+const CLIENT_ICON_FACEBOOK  = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/facebook_icon_6c909bfe-8de4-431a-a566-9582bb369ef8.svg?v=1775885815';
+
+const CLIENT_SIGNATURES = {
+  company: `合同会社HIKOBAYU<br>62-3 Motomachi, Niseko, Hokkaido<br><span style="color:#c8bfb0">─────────────────</span><br>info@hikobayu.com<br>hikobayu.com`,
+  kayo:    `澤田 佳代子 &nbsp; Kayoko Sawada<br>合同会社HIKOBAYU &nbsp; 代表<br><span style="color:#c8bfb0">─────────────────</span><br>62-3 Motomachi, Niseko, Hokkaido<br>someco@hikobayu.com<br>hikobayu.com`,
+  kento:   `澤田 健人 &nbsp; Kento Sawada<br>合同会社HIKOBAYU &nbsp; Director<br><span style="color:#c8bfb0">─────────────────</span><br>62-3 Motomachi, Niseko, Hokkaido<br>kento.sawada@hikobayu.com<br>hikobayu.com`,
+};
+
+function buildHtmlEmailClient(bodyHtml, imageUrl, senderId) {
+  const imageSection = imageUrl
+    ? `<div style="margin:16px 0;"><img src="${imageUrl}" alt="" style="display:block;width:100%;max-width:100%;height:auto;border:0;"></div>`
+    : '';
+  const styledBody = bodyHtml
+    .replace(/<p>/g, '<p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.8;">')
+    .replace(/<p /g, '<p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.8;" ')
+    .replace(/<ul>/g, '<ul style="margin:0 0 16px;padding-left:20px;">')
+    .replace(/<ol>/g, '<ol style="margin:0 0 16px;padding-left:20px;">')
+    .replace(/<li>/g, '<li style="margin:0 0 4px;">');
+  const signature = CLIENT_SIGNATURES[senderId] || CLIENT_SIGNATURES.company;
+  return `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#f9f9f7;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f9f9f7"><tr><td align="center" style="padding:32px 16px;">
+<table cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;">
+<tr><td align="center" style="padding:32px 40px 24px;border-bottom:1px solid #f0ede8;">
+<img src="https://cdn.shopify.com/s/files/1/0608/7904/4846/files/logo_hikobayu_c468359f-75fc-4852-9a09-8c1331fadb24.png?v=1760691427" width="160" alt="HIKOBAYU" style="display:block;max-width:160px;height:auto;border:0;">
+</td></tr>
+<tr><td style="padding:32px 40px;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',Helvetica,Arial,sans-serif;font-size:15px;color:#333333;line-height:1.8;">
+${styledBody}${imageSection}
+</td></tr>
+<tr><td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;text-align:center;background-color:#f9f7f4;">
+<table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 16px;"><tr>
+<td style="padding:0 6px;"><a href="https://www.instagram.com/hikobayu/?hl=ja"><img src="${CLIENT_ICON_INSTAGRAM}" width="32" height="32" alt="Instagram" style="display:block;border:0;"></a></td>
+<td style="padding:0 6px;"><a href="https://www.facebook.com/hikobayu/?locale=ja_JP"><img src="${CLIENT_ICON_FACEBOOK}" width="32" height="32" alt="Facebook" style="display:block;border:0;"></a></td>
+</tr></table>
+</td></tr>
+<tr><td align="center" style="font-family:Georgia,serif;font-size:12px;color:#7a7060;line-height:1.8;padding:0 20px 24px;background-color:#f9f7f4;">
+${signature}
+</td></tr>
+</table></td></tr></table></body></html>`;
 }
 
-// 定型文チップHTML生成
-function renderTemplateChips(textareaId) {
-  if (templates.length === 0) return '';
-  return `
-    <div style="margin-top:6px;">
-      <label style="font-size:11px;color:#999;">定型文を挿入：</label>
-      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;">
-        ${templates.map(t => `<span class="attach-chip" onclick="insertTemplate('${t.id}','${textareaId}')" title="${escapeAttr(t.text.slice(0,100))}">&#x1f4dd; ${escapeHtml(t.name)}</span>`).join('')}
-      </div>
-    </div>
-  `;
-}
+const _cardHtmlCache = {}; // index → htmlEmail のキャッシュ
 
-// === タブ切り替え ===
-function switchTab(tab) {
-  currentTab = tab;
-  location.hash = tab === 'clients' ? '#clients' : '#sales';
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
-  });
-  document.getElementById('salesFilters').style.display = tab === 'sales' ? '' : 'none';
-  document.getElementById('clientFilters').style.display = tab === 'clients' ? '' : 'none';
-  if (tab === 'sales') {
-    init();
-  } else {
-    initClients();
+// Gmail送信フロー（カード内から直接）
+let _gmailPendingContext = null; // モーダルOK後に使うURL＆index
+
+async function sendViaGmail(index) {
+  const item = clientData[index];
+  const subject = document.getElementById(`client-subject-${index}`)?.value || '';
+  const senderSel = document.getElementById('clientSenderSelect');
+  const senderId = senderSel?.value || 'company';
+  const htmlEmail = _cardHtmlCache[index];
+
+  if (!item.email) { alert('メールアドレスが登録されていません'); return; }
+  if (!subject.trim()) { alert('件名を入力してください'); return; }
+  if (!htmlEmail) { alert('メールを生成してください'); return; }
+
+  // 選択された添付資料をHTMLに埋め込む
+  let htmlBody = htmlEmail;
+  const attachChips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
+  if (attachChips.length > 0) {
+    let attachSection = `<tr><td style="padding:8px 40px 24px;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif;">`;
+    attachSection += `<p style="margin:0 0 8px;font-size:13px;color:#666666;font-weight:bold;">【添付資料】</p>`;
+    attachChips.forEach(chip => {
+      const name = chip.dataset.name;
+      const url = chip.dataset.url;
+      if (url) {
+        attachSection += `<p style="margin:0 0 4px;font-size:13px;"><a href="${url}" style="color:#5a9e4b;">${name}</a></p>`;
+      } else {
+        attachSection += `<p style="margin:0 0 4px;font-size:13px;color:#333;">${name}</p>`;
+      }
+    });
+    attachSection += `</td></tr>`;
+    htmlBody = htmlBody.replace(
+      `<tr><td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;`,
+      attachSection + `<tr><td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;`
+    );
+  }
+
+  // 送信ボタンを無効化
+  const btn = document.querySelector(`#client-actions-${index} .btn-send-html`);
+  if (btn) { btn.disabled = true; btn.textContent = '下書き作成中...'; }
+
+  try {
+    // Gmail API で下書き作成
+    const res = await fetch('/api/create-gmail-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: item.email, subject, htmlBody, senderId }),
+    });
+    const data = await res.json();
+
+    // 未認証の場合 → 認証ページへ誘導
+    if (res.status === 401) {
+      if (confirm(`Gmail API の認証が必要です。認証ページを開きますか？`)) {
+        window.open(data.authUrl, '_blank');
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
+      return;
+    }
+    if (!res.ok) throw new Error(data.error || 'エラー');
+
+    // Notion に自動記録（非同期）
+    fetch('/api/log-email-sent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: item.id, clientName: item.name, subject, contactDate: today() }),
+    }).catch(e => console.warn('Notion記録エラー:', e));
+
+    // モーダル表示
+    _gmailPendingContext = { draftUrl: data.draftUrl, index };
+    document.getElementById('gmailGuideModal').classList.add('show');
+
+  } catch (err) {
+    alert('エラー: ' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
   }
 }
+
+function closeGmailModal() {
+  document.getElementById('gmailGuideModal').classList.remove('show');
+  _gmailPendingContext = null;
+}
+
+// 「Gmailで開いてフォロー一覧に戻る」ボタン
+function confirmOpenGmail() {
+  if (!_gmailPendingContext) return;
+  const { draftUrl, index, notionPayload } = _gmailPendingContext;
+  _gmailPendingContext = null;
+
+  window.open(draftUrl, '_blank');
+  document.getElementById('gmailGuideModal').classList.remove('show');
+
+  // Notion に記録（定型文直送・AI生成共通）
+  const payload = notionPayload || {};
+  if (payload.clientId) {
+    fetch('/api/contacts/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, contactDate: today() }),
+    }).catch(e => console.warn('Notion記録エラー:', e));
+  }
+
+  // 送信データを保存して「送信済みにする」バナーを表示
+  _pendingSentData[index] = payload;
+  showMarkAsSentBanner(index);
+}
+
+// 送信後に「✅ 送信済みにする」バナーをカードに表示
+function showMarkAsSentBanner(index) {
+  const card = document.getElementById(`client-card-${index}`);
+  if (!card || card.querySelector('.sent-pending-banner')) return;
+
+  // アクションボタンエリアを非表示
+  const actionsEl = document.getElementById(`client-actions-${index}`);
+  if (actionsEl) actionsEl.style.display = 'none';
+
+  const banner = document.createElement('div');
+  banner.className = 'sent-pending-banner';
+  banner.innerHTML = `
+    <div style="padding:12px 20px;background:#fffbeb;border-top:2px solid #f59e0b;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:13px;color:#92400e;">📨 Gmail下書きを作成しました。送信後に記録してください。</span>
+      <button onclick="markAsSent(${index})" style="background:#2d5a27;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ 送信済みにする</button>
+    </div>`;
+  card.appendChild(banner);
+}
+
+// 「✅ 送信済みにする」ボタン処理
+async function markAsSent(index) {
+  const item = clientData[index];
+  if (!item) return;
+
+  const payload = _pendingSentData[index] || {};
+  const subject = document.getElementById(`client-subject-${index}`)?.value
+    || payload.subject || '';
+
+  // localStorage に保存
+  const hidden = getHiddenClients();
+  if (!hidden.find(h => h.clientId === item.id)) {
+    hidden.push({
+      clientId: item.id,
+      name: item.name,
+      contact: item.contact || '',
+      email: item.email || '',
+      sentAt: new Date().toISOString(),
+      subject,
+      senderEmail: payload.senderEmail || '',
+      templateNames: payload.templateNames || '',
+      attachNames: payload.attachNames || '',
+    });
+    setHiddenClients(hidden);
+  }
+
+  // カードをフェードアウトして非表示
+  const card = document.getElementById(`client-card-${index}`);
+  if (card) {
+    card.style.transition = 'opacity 0.4s';
+    card.style.opacity = '0';
+    setTimeout(() => { card.style.display = 'none'; }, 400);
+  }
+
+  // sessionStorage のメール状態もクリア
+  try { sessionStorage.removeItem('hf_mail_' + item.id); } catch(e) {}
+  delete _pendingSentData[index];
+}
+
+// === テキスト→HTML変換（Claude生成テキストをメール本文HTML化） ===
+function textToHtml(text) {
+  // 連続する改行でパラグラフ分割、単一改行は<br>
+  return text
+    .split(/\n{2,}/)
+    .map(para => {
+      const lines = para.replace(/\n/g, '<br>');
+      return `<p>${lines}</p>`;
+    })
+    .join('');
+}
+
 
 // === 取引先チャネルフィルター ===
 function setClientChannel(ch) {
@@ -1030,6 +1026,7 @@ function setClientFollowFilter(f) {
   initClients();
 }
 
+
 // === 取引先プロパティ抽出 ===
 function extractClientProps(page) {
   const p = page.properties;
@@ -1038,71 +1035,82 @@ function extractClientProps(page) {
     name: p['企業名']?.title?.[0]?.plain_text || '（無題）',
     contact: p['担当者名']?.rich_text?.[0]?.plain_text || '',
     email: p['メールアドレス']?.email || '',
-    phone: p['電話番号']?.phone_number || '',
     channel: p['ソース']?.select?.name || '',
-    status: p['取引ステータス']?.select?.name || '',
-    orderHistory: (p['注文商品']?.multi_select || []).map(s => s.name).join('、'),
-    followStatus: p['フォロー状況']?.select?.name || '',
-    followTypes: (p['フォロー種別']?.multi_select || []).map(s => s.name),
-    lastOrderDate: p['最終取引日']?.date?.start || '',
+    stage: p['ステージ']?.select?.name || '',
+    orderHistory: (p['取引商品']?.multi_select || []).map(s => s.name).join('、'),
+    business: (p['業態']?.multi_select || []).map(s => s.name).join('、'),
+    lastFollowDate: p['前回フォロー日']?.date?.start || '',
     nextFollowDate: p['次回フォロー日']?.date?.start || '',
+    nextAction: p['次のアクション']?.rich_text?.[0]?.plain_text || '',
+    latestContactMemo: '', // コンタクト履歴から非同期で埋める
     memo: p['メモ']?.rich_text?.[0]?.plain_text || '',
-    totalAmount: p['累計取引金額']?.number || 0,
   };
 }
-
-// === フォロー種別の選択肢 ===
-const FOLLOW_TYPE_OPTIONS = ['お礼','挨拶','キャンペーン案内','お客様の声収集','他商品のご案内','新商品のご案内','価格変更のご案内','アンケート','再発注確認'];
 
 // === 取引先カードHTML生成 ===
 function renderClientCard(item, index) {
   const chBadge = item.channel ? `<span class="badge" style="background:#e0f2fe;color:#0369a1;">${item.channel}</span>` : '';
-  const stBadge = item.status ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.status}</span>` : '';
-  const fsBadge = item.followStatus ? `<span class="badge badge-${item.followStatus === '未対応' ? '反応待ち' : item.followStatus === '完了' ? '' : '検討中'}">${item.followStatus}</span>` : '';
-
-  // フォロー種別マルチセレクト
-  const followTypeHtml = FOLLOW_TYPE_OPTIONS.map(opt => {
-    const checked = item.followTypes.includes(opt) ? 'selected' : '';
-    return `<span class="attach-chip ${checked}" data-type="${escapeAttr(opt)}" onclick="this.classList.toggle('selected')">${opt}</span>`;
-  }).join('');
+  const stageBadge = item.stage ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.stage}</span>` : '';
+  const bizBadge = item.business ? `<span class="badge badge-industry">${item.business}</span>` : '';
 
   // 添付資料チップ
-  let attachHtml = '';
-  if (attachments.length > 0) {
-    attachHtml = attachments.map(a =>
-      `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" onclick="this.classList.toggle('selected')" title="${escapeAttr(a.description || '')}">${a.name}</span>`
-    ).join('');
-  }
+  let attachHtml = attachments.length > 0
+    ? attachments.map(a =>
+        `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" onclick="this.classList.toggle('selected')" title="${escapeAttr(a.description || '')}">${a.name}</span>`
+      ).join('')
+    : '<span class="attach-empty">資料未登録</span>';
+
+  // 定型文チップ（独立枠・複数選択可）
+  const templateHtml = templates.length > 0
+    ? templates.map(t => `<span class="attach-chip" data-template-id="${t.id}" data-template-text="${escapeAttr(t.text)}" onclick="this.classList.toggle('selected');updateTemplateContext(${index})" title="${escapeAttr(t.text.slice(0,100))}">&#x1f4dd; ${escapeHtml(t.name)}</span>`).join('')
+    : '<span style="font-size:12px;color:#aaa;">定型文未登録（ヘッダーの「定型文管理」から追加）</span>';
+
+  // メモ（長い場合は折り畳み）
+  const memoShort = item.memo ? (item.memo.length > 50 ? item.memo.slice(0, 50) + '…' : item.memo) : '';
+  const memoHtml = item.memo ? `
+    <span id="memo-toggle-${index}" style="cursor:pointer;color:#555;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" onclick="toggleMemo(${index})" title="クリックで全文表示">
+      &#x1f4dd; ${escapeHtml(memoShort)}${item.memo.length > 50 ? ' <span style=\'color:#888;font-size:11px;\'>▼</span>' : ''}
+    </span>
+    <div id="memo-full-${index}" style="display:none;font-size:12px;background:#f8f8f4;border:1px solid #ddd;border-radius:4px;padding:6px 8px;margin-top:2px;white-space:pre-wrap;max-height:120px;overflow-y:auto;">${escapeHtml(item.memo)}</div>
+  ` : '';
 
   return `
     <div class="card" id="client-card-${index}">
       <div class="card-header">
         <span class="card-title">${escapeHtml(item.name)}</span>
-        <div class="card-badges">${chBadge}${stBadge}${fsBadge}</div>
+        <div class="card-badges">${chBadge}${stageBadge}${bizBadge}</div>
       </div>
       <div class="card-info">
         ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
         ${item.email ? `<span>&#x1f4e7; ${escapeHtml(item.email)}</span>` : ''}
-        ${item.lastOrderDate ? `<span>最終取引：${item.lastOrderDate}</span>` : ''}
         ${item.orderHistory ? `<span>&#x1f4e6; ${escapeHtml(item.orderHistory)}</span>` : ''}
+        ${item.lastFollowDate ? `<span>&#x1f4c5; 前回フォロー日：${item.lastFollowDate}</span>` : ''}
         ${item.nextFollowDate ? `<span>&#x1f4c5; 次回：${item.nextFollowDate}</span>` : '<span>&#x1f4c5; 次回：未設定</span>'}
-        ${item.memo ? `<span>&#x1f4dd; ${escapeHtml(item.memo)}</span>` : ''}
+        ${item.nextAction ? `<span>&#x1f4cc; ${escapeHtml(item.nextAction)}</span>` : ''}
+        ${memoHtml}
       </div>
-      <div class="context-section">
-        <label>フォロー種別（複数選択可）</label>
-        <div class="attach-list" id="client-types-${index}" style="margin-bottom:8px;">${followTypeHtml}</div>
-        <label>生成前に入れたい情報をここに入力 <span>任意</span></label>
-        <textarea class="context-textarea" id="client-context-${index}" placeholder="例：先月の注文が好評だった、新商品を案内したい…"></textarea>
-        ${renderTemplateChips('client-context-' + index)}
+      <div class="card-collapsible">
+      <div class="context-section" style="padding-bottom:10px;">
+        <label>前回の対応内容（編集可・メール生成に使用）</label>
+        <textarea id="prev-action-${index}" style="width:100%;box-sizing:border-box;font-size:13px;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;" placeholder="読み込み中..."></textarea>
+      </div>
+      <div class="context-section" style="padding-bottom:10px;">
+        <label>定型文（クリックで選択・複数可）</label>
+        <div id="template-panel-${index}" class="attach-list" style="margin-top:4px;">${templateHtml}</div>
+        <textarea id="template-text-${index}" style="width:100%;box-sizing:border-box;font-size:12px;background:#fffef8;border:1px solid #e8e4d0;border-radius:6px;padding:6px 10px;min-height:60px;resize:vertical;font-family:inherit;line-height:1.5;margin-top:6px;" placeholder="選択した定型文の内容がここに表示されます（編集可）"></textarea>
       </div>
       <div class="attach-section" id="client-attach-panel-${index}">
         <label>&#x1f4ce; 添付資料（クリックで選択）</label>
-        <div class="attach-list">${attachHtml || '<span class="attach-empty">資料未登録</span>'}</div>
+        <div class="attach-list">${attachHtml}</div>
       </div>
       <div class="mail-section" id="client-mail-${index}">
-        <button class="btn btn-regen" onclick="generateClientMail(${index})" style="width:100%;padding:12px;font-size:15px;">&#x2709; メールを生成する</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-regen" onclick="generateClientMail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x2709; メールを生成する</button>
+          <button class="btn btn-gmail" onclick="sendDirectViaGmail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x1f4e8; 定型文でそのまま送る</button>
+        </div>
       </div>
       <div class="card-actions" id="client-actions-${index}" style="display:none;"></div>
+      </div>
     </div>
   `;
 }
@@ -1110,15 +1118,25 @@ function renderClientCard(item, index) {
 // === 取引先メール生成 ===
 async function generateClientMail(index) {
   const item = clientData[index];
-  const extraContext = document.getElementById(`client-context-${index}`)?.value || '';
-  const selectedTypes = Array.from(document.querySelectorAll(`#client-types-${index} .attach-chip.selected`)).map(el => el.dataset.type);
   const mailEl = document.getElementById(`client-mail-${index}`);
   mailEl.className = 'mail-section generating';
   mailEl.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 6px;"></div>メール文を生成中...`;
   document.getElementById(`client-actions-${index}`).style.display = 'none';
 
   const senderSel = document.getElementById('clientSenderSelect');
-  const sender = senderAccounts.find(s => s.id === senderSel.value) || senderAccounts[1];
+  const sender = senderAccounts.find(s => s.id === senderSel.value) || senderAccounts[0];
+
+  // 前回の対応内容（テキストエリアの現在の値）
+  const prevActionEl = document.getElementById(`prev-action-${index}`);
+  const previousAction = prevActionEl ? prevActionEl.value : (item.latestContactMemo || '');
+
+  // 定型文テキスト（定型文エリアの現在の値）
+  const templateTextEl = document.getElementById(`template-text-${index}`);
+  const templateContext = templateTextEl ? templateTextEl.value : '';
+
+  // 選択中の添付資料名
+  const selectedAttachChips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
+  const attachNames = Array.from(selectedAttachChips).map(el => el.dataset.name).filter(Boolean).join('、');
 
   try {
     const res = await fetch('/api/claude/generate-client', {
@@ -1130,23 +1148,32 @@ async function generateClientMail(index) {
           contact: item.contact,
           channel: item.channel,
           orderHistory: item.orderHistory,
-          lastOrderDate: item.lastOrderDate,
-          followTypes: selectedTypes.length > 0 ? selectedTypes : ['他商品のご案内'],
+          business: item.business,
+          stage: item.stage,
+          previousAction,
           memo: item.memo,
-          extraContext,
+          extraContext: templateContext,
+          attachNames,
         },
         senderId: sender.id,
       })
     });
     const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-    const jsonMatch = text.match(/\{[\s\S]*"subject"[\s\S]*"body"[\s\S]*\}/);
+
+    // パース：content配列から全textブロックを結合
+    const text = (data.content || [])
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('');
+
+    const jsonMatch = text.match(/\{[\s\S]*?"subject"[\s\S]*?"body"[\s\S]*\}/);
     if (jsonMatch) {
       const mail = JSON.parse(jsonMatch[0]);
       clientOriginalMails[index] = { subject: mail.subject, body: mail.body };
       renderClientMailSection(index, item, mail.subject, mail.body);
     } else {
-      throw new Error('メール生成結果のパースに失敗');
+      console.error('Claude APIレスポンス（パース失敗）:', data);
+      throw new Error('メール生成結果のパースに失敗（コンソール確認）');
     }
   } catch (err) {
     mailEl.classList.remove('generating');
@@ -1155,28 +1182,128 @@ async function generateClientMail(index) {
 }
 
 function renderClientMailSection(index, item, subject, body) {
+  // sessionStorage に保存（ブラウザバック対策）
+  try {
+    sessionStorage.setItem('hf_mail_' + item.id, JSON.stringify({ subject, body }));
+  } catch(e) {}
+
   const mailEl = document.getElementById(`client-mail-${index}`);
   mailEl.classList.remove('generating');
+
+  // 変数置換
+  const vars = { facility_name: item.name || '', name: item.contact || '' };
+  const subjectSub = (subject || '').replace(/\{\{facility_name\}\}/g, vars.facility_name).replace(/\{\{name\}\}/g, vars.name);
+  const bodySub = (body || '').replace(/\{\{facility_name\}\}/g, vars.facility_name).replace(/\{\{name\}\}/g, vars.name);
+
+  // HTML メールプレビューを構築してキャッシュ
+  const bodyHtml = textToHtml(bodySub);
+  const senderSelForCache = document.getElementById('clientSenderSelect');
+  const senderIdForCache = senderSelForCache?.value || 'company';
+  const htmlEmail = buildHtmlEmailClient(bodyHtml, null, senderIdForCache);
+  _cardHtmlCache[index] = htmlEmail;
+
   mailEl.innerHTML = `
     <div class="mail-subject">件名：</div>
-    <input class="mail-subject-input" id="client-subject-${index}" value="${escapeAttr(subject)}">
-    <textarea class="mail-body-textarea" id="client-body-${index}">${escapeHtml(body)}</textarea>
+    <input class="mail-subject-input" id="client-subject-${index}" value="${escapeAttr(subjectSub)}">
+    <div style="border:1px solid #e0d8cc;border-radius:8px;overflow:hidden;margin-top:8px;background:#f9f9f7;">
+      <iframe id="client-preview-iframe-${index}" style="width:100%;border:none;height:420px;display:block;"></iframe>
+    </div>
   `;
+
+  // iframe に HTML をセット
+  const iframe = document.getElementById(`client-preview-iframe-${index}`);
+  iframe.srcdoc = htmlEmail;
+  iframe.onload = () => {
+    try {
+      const h = iframe.contentDocument?.body?.scrollHeight;
+      if (h && h > 100) iframe.style.height = (h + 20) + 'px';
+    } catch(e) {}
+  };
 
   const actionsEl = document.getElementById(`client-actions-${index}`);
   actionsEl.style.display = 'flex';
   actionsEl.innerHTML = `
-    <a class="btn btn-gmail" id="client-gmail-${index}" href="#" target="_blank"
-       onclick="this.href=buildClientGmailLink(${index})">
-      &#x1f4e7; Gmailで開く
-    </a>
-    <button class="btn btn-regen" onclick="generateClientMail(${index})">
+    <button class="btn btn-send-html" onclick="sendViaGmail(${index})" style="flex:1;justify-content:center;">
+      &#x2709; 送信（下書き作成）
+    </button>
+    <button class="btn btn-regen" onclick="generateClientMail(${index})" style="padding:8px 12px;">
       &#x1f504; 再生成
     </button>
-    <button class="btn btn-done" id="client-done-${index}" onclick="markClientDone(${index})">
-      &#x2705; 送信済み
-    </button>
   `;
+}
+
+// === 定型文でそのまま Gmail 下書き作成（AI生成なし）===
+async function sendDirectViaGmail(index) {
+  const item = clientData[index];
+  if (!item.email) { alert('メールアドレスが登録されていません'); return; }
+
+  const senderSel = document.getElementById('clientSenderSelect');
+  const senderId = senderSel?.value || 'company';
+
+  // 定型文テキストを取得
+  const templateTextEl = document.getElementById(`template-text-${index}`);
+  const templateText = templateTextEl?.value?.trim() || '';
+  if (!templateText) { alert('定型文を選択してください'); return; }
+
+  // 件名：定型文の1行目、または施設名を使ったデフォルト
+  const firstLine = templateText.split('\n')[0].replace(/^#+\s*/, '').trim();
+  const vars = { facility_name: item.name || '', name: item.contact || '' };
+  const subject = (firstLine || `${item.name} 様へのご連絡`)
+    .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+    .replace(/\{\{name\}\}/g, vars.name);
+
+  // 添付資料リンクを本文末尾に付与
+  const attachLinks = getClientSelectedAttachLinks(index);
+  const fullText = templateText + attachLinks;
+
+  // 変数置換してHTML化
+  const substituted = fullText
+    .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+    .replace(/\{\{name\}\}/g, vars.name);
+  const bodyHtml = textToHtml(substituted);
+  const htmlEmail = buildHtmlEmailClient(bodyHtml, null, senderId);
+
+  // ボタンを「作成中」に
+  const mailEl = document.getElementById(`client-mail-${index}`);
+  const btn = mailEl.querySelector('button.btn-gmail');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '下書き作成中...';
+
+  try {
+    const res = await fetch('/api/create-gmail-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: item.email, subject, htmlBody: htmlEmail, senderId }),
+    });
+    const data = await res.json();
+    if (data.authUrl) {
+      alert('Gmail認証が必要です。このPCで認証してから再試行してください。\n' + data.authUrl);
+      btn.disabled = false; btn.textContent = origText; return;
+    }
+    if (!data.ok) throw new Error(data.error || '下書き作成失敗');
+    _gmailPendingContext = {
+      draftUrl: data.draftUrl,
+      index,
+      notionPayload: {
+        clientId: item.id,
+        clientName: item.name,
+        subject,
+        senderEmail: (senderAccounts.find(s => s.id === senderId) || {}).email || '',
+        contactEmail: item.email || '',
+        templateNames: Array.from(document.querySelectorAll(`#template-panel-${index} .attach-chip.selected`))
+          .map(c => c.textContent.replace(/^📝\s*/, '').trim()).join('、'),
+        attachNames: Array.from(document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`))
+          .map(c => c.dataset.name).join('、'),
+      }
+    };
+    document.getElementById('gmailGuideModal').classList.add('show');
+  } catch (err) {
+    alert('エラー: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
 }
 
 function getClientSelectedAttachLinks(index) {
@@ -1202,6 +1329,20 @@ function buildClientGmailLink(index) {
   return `https://mail.google.com/mail/?view=cm&${params.toString()}`;
 }
 
+// === 送信済みカードを視覚的に折りたたむ ===
+function applyCardDone(index, bannerText) {
+  const card = document.getElementById(`client-card-${index}`);
+  if (!card) return;
+  card.classList.add('card-done');
+  // バナーがまだなければ追加
+  if (!card.querySelector('.card-done-banner')) {
+    const banner = document.createElement('div');
+    banner.className = 'card-done-banner';
+    banner.innerHTML = `✅ ${bannerText}`;
+    card.insertBefore(banner, card.querySelector('.card-collapsible'));
+  }
+}
+
 // === 取引先 送信済みボタン ===
 async function markClientDone(index) {
   const item = clientData[index];
@@ -1209,45 +1350,56 @@ async function markClientDone(index) {
   btn.disabled = true;
   btn.textContent = '更新中...';
 
-  const selectedTypes = Array.from(document.querySelectorAll(`#client-types-${index} .attach-chip.selected`)).map(el => el.dataset.type);
-  const nextDate = addDays(today(), 30); // 取引先は長めのサイクル
-
-  // メール履歴をNotionページに追記
+  const todayStr = today();
+  const nextDate = addDays(todayStr, 30);
   const subjectEl = document.getElementById(`client-subject-${index}`);
-  const bodyEl = document.getElementById(`client-body-${index}`);
-  if (subjectEl && bodyEl) {
-    const senderSel = document.getElementById('clientSenderSelect');
-    const sender = senderAccounts.find(s => s.id === senderSel.value) || senderAccounts[1];
-    try {
-      await fetch(`/api/notion/append-email/${item.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subject: subjectEl.value,
-          body: bodyEl.value,
-          senderName: sender.signature,
-          date: today(),
-        })
-      });
-    } catch (e) {
-      console.warn('メール履歴保存エラー:', e);
-    }
+  const subject = subjectEl?.value || '';
+
+  // 送信情報を収集
+  const senderSel = document.getElementById('clientSenderSelect');
+  const sender = senderAccounts.find(s => s.id === senderSel?.value) || senderAccounts[0];
+  const templateChips = document.querySelectorAll(`#template-panel-${index} .attach-chip.selected`);
+  const attachChips   = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
+  const templateNames = Array.from(templateChips).map(c => c.textContent.replace(/^📝\s*/, '').trim()).join('、') || '';
+  const attachNames   = Array.from(attachChips).map(c => c.dataset.name).join('、') || '';
+
+  // 1. コンタクト履歴DBにレコード作成（詳細付き）
+  try {
+    await fetch('/api/contacts/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: item.id,
+        clientName: item.name,
+        subject,
+        contactDate: todayStr,
+        senderEmail: sender?.email || '',
+        contactEmail: item.email || '',
+        templateNames,
+        attachNames,
+      })
+    });
+  } catch (e) {
+    console.warn('コンタクト履歴作成エラー:', e);
   }
 
+  // 2. 取引先マスターの前回フォロー日を今日に更新・次回フォロー日をセット
   try {
     const res = await fetch(`/api/clients/update/${item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         nextFollowDate: nextDate,
-        followStatus: '完了',
-        followType: selectedTypes.length > 0 ? selectedTypes : item.followTypes,
+        lastFollowDate: todayStr,
       })
     });
     if (!res.ok) throw new Error('更新に失敗しました');
 
-    btn.classList.add('completed');
-    btn.innerHTML = `&#x2705; 完了（次回：${nextDate}）`;
+    const bannerText = `送信済み（次回フォロー：${nextDate}）`;
+    applyCardDone(index, bannerText);
+    // sessionStorage にも保存してブラウザバック後も維持
+    try { sessionStorage.setItem('hf_done_' + item.id, bannerText); } catch(e) {}
+
   } catch (err) {
     btn.disabled = false;
     btn.textContent = '送信済み（再試行）';
@@ -1255,6 +1407,130 @@ async function markClientDone(index) {
   }
 }
 
+
+// === 送信済み一覧 ===
+function showSentHistory() {
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('clientFilters').style.display = 'none';
+  document.getElementById('sent-history-view').style.display = 'block';
+  document.getElementById('btn-sent-history').style.background = '#e8f5e3';
+  initSentHistory();
+}
+
+function hideSentHistory() {
+  document.getElementById('sent-history-view').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.getElementById('clientFilters').style.display = 'block';
+  document.getElementById('btn-sent-history').style.background = '';
+}
+
+async function initSentHistory() {
+  const el = document.getElementById('sent-history-main');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
+
+  // localStorage の非表示カードを先に表示（上部に）
+  const hiddenClients = getHiddenClients().slice().reverse(); // 新しい順
+
+  try {
+    const res = await fetch('/api/contacts/list?limit=50');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    const notionItems = data.results || [];
+
+    // localStorage アイテムを Notion 形式に変換（clientId が Notion にもある場合は重複除外）
+    const notionClientIds = new Set(notionItems.map(i => i.clientId).filter(Boolean));
+    const localItems = hiddenClients
+      .filter(h => !notionClientIds.has(h.clientId))
+      .map(h => ({
+        id: null,
+        title: `${h.sentAt?.slice(0,10) || today()} ${h.name} メール送信`,
+        contactDate: h.sentAt?.slice(0,10) || today(),
+        clientId: h.clientId,
+        subject: h.subject,
+        sentAt: h.sentAt,
+        senderEmail: h.senderEmail,
+        contactEmail: h.email,
+        templateNames: h.templateNames,
+        attachNames: h.attachNames,
+        _fromLocal: true,
+      }));
+
+    const allItems = [...localItems, ...notionItems];
+    document.getElementById('sent-history-count').textContent = `（${allItems.length} 件）`;
+
+    if (allItems.length === 0) {
+      el.innerHTML = '<div class="empty"><h2>送信履歴がありません</h2></div>';
+      return;
+    }
+    el.innerHTML = allItems.map(renderSentHistoryCard).join('');
+  } catch (err) {
+    // Notion 失敗でも localStorage 分は表示する
+    const localItems = hiddenClients.map(h => ({
+      id: null, title: `${h.sentAt?.slice(0,10)||today()} ${h.name} メール送信`,
+      contactDate: h.sentAt?.slice(0,10)||today(), clientId: h.clientId,
+      subject: h.subject, senderEmail: h.senderEmail, contactEmail: h.email,
+      templateNames: h.templateNames, attachNames: h.attachNames, _fromLocal: true,
+    }));
+    document.getElementById('sent-history-count').textContent = `（${localItems.length} 件・Notionエラー）`;
+    el.innerHTML = localItems.length
+      ? localItems.map(renderSentHistoryCard).join('')
+      : `<div class="empty"><h2>読み込みエラー</h2><p>${err.message}</p></div>`;
+  }
+}
+
+function renderSentHistoryCard(item) {
+  const dateStr = item.contactDate ? item.contactDate.replace(/-/g, '/') : '—';
+  const rows = [
+    item.subject      ? `<tr><td style="color:#888;white-space:nowrap;padding:3px 12px 3px 0;font-size:12px;">件名</td><td style="font-size:13px;">${escapeHtml(item.subject)}</td></tr>` : '',
+    item.senderEmail  ? `<tr><td style="color:#888;white-space:nowrap;padding:3px 12px 3px 0;font-size:12px;">送信者</td><td style="font-size:13px;">${escapeHtml(item.senderEmail)}</td></tr>` : '',
+    item.contactEmail ? `<tr><td style="color:#888;white-space:nowrap;padding:3px 12px 3px 0;font-size:12px;">宛先</td><td style="font-size:13px;">${escapeHtml(item.contactEmail)}</td></tr>` : '',
+    item.templateNames? `<tr><td style="color:#888;white-space:nowrap;padding:3px 12px 3px 0;font-size:12px;">定型文</td><td style="font-size:13px;">${escapeHtml(item.templateNames)}</td></tr>` : '',
+    item.attachNames  ? `<tr><td style="color:#888;white-space:nowrap;padding:3px 12px 3px 0;font-size:12px;">添付資料</td><td style="font-size:13px;">${escapeHtml(item.attachNames)}</td></tr>` : '',
+  ].filter(Boolean).join('');
+
+  // タイトルから会社名を抽出（"YYYY-MM-DD 会社名 メール送信"）
+  const titleMatch = item.title.match(/^\d{4}-\d{2}-\d{2}\s+(.+?)\s+メール送信$/);
+  const companyName = titleMatch ? titleMatch[1] : item.title;
+
+  const resendBtn = item.clientId
+    ? `<button onclick="resendToClient('${item.clientId}')" style="background:#f0f7ee;border:1px solid #b6d9b0;color:#2d5a27;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;">↩ 再送・追加送信</button>`
+    : '';
+
+  return `
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-header" style="padding:12px 20px;">
+        <div>
+          <div class="card-title" style="font-size:15px;">${escapeHtml(companyName)}</div>
+          <div style="font-size:12px;color:#888;margin-top:2px;">📅 ${dateStr}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+          ${resendBtn}
+        </div>
+      </div>
+      ${rows ? `<div style="padding:10px 20px 14px;border-top:1px solid #f0f0f0;"><table style="border-collapse:collapse;">${rows}</table></div>` : ''}
+    </div>`;
+}
+
+async function resendToClient(clientId) {
+  // 非表示リストから削除して再表示できるようにする
+  setHiddenClients(getHiddenClients().filter(h => h.clientId !== clientId));
+  hideSentHistory();
+  clientChannel = 'all';
+  clientFollowFilter = 'all';
+  document.querySelectorAll('[data-channel]').forEach(b => b.classList.toggle('active', b.dataset.channel === 'all'));
+  document.querySelectorAll('[data-follow]').forEach(b => b.classList.toggle('active', b.dataset.follow === 'all'));
+  await initClients();
+  // 対象カードを探してスクロール
+  const idx = clientData.findIndex(c => c.id === clientId);
+  if (idx !== -1) {
+    const card = document.getElementById(`client-card-${idx}`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.style.outline = '3px solid #5a9e4b';
+      setTimeout(() => { card.style.outline = ''; }, 2000);
+    }
+  }
+}
 
 // === 取引先画面の初期化 ===
 async function initClients() {
@@ -1281,7 +1557,7 @@ async function initClients() {
       clientSenderSel.innerHTML = senderAccounts.map(s =>
         `<option value="${s.id}">${s.label}（${s.email}）</option>`
       ).join('');
-      clientSenderSel.value = 'kayo';
+      clientSenderSel.value = 'company';
     }
 
     // 取引先データ取得
@@ -1290,15 +1566,25 @@ async function initClients() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         channel: clientChannel,
-        followStatus: clientFollowFilter,
-        limit: 100,
+        stage: clientFollowFilter,
       })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
     const pages = data.results || [];
-    clientData = pages.map(p => extractClientProps(p));
+
+    // 送信済みフィルタ: Notion（複数ブラウザ共有）+ localStorage（即時反映）
+    let notionSentIds = new Set();
+    try {
+      const sentRes = await fetch('/api/sent-today');
+      const sentData = await sentRes.json();
+      notionSentIds = new Set(sentData.clientIds || []);
+    } catch(e) { console.warn('sent-today取得失敗（フィルタをスキップ）', e); }
+    const localHiddenIds = new Set(getHiddenClients().map(h => h.clientId));
+    const hiddenIds = new Set([...notionSentIds, ...localHiddenIds]);
+
+    clientData = pages.map(p => extractClientProps(p)).filter(item => !hiddenIds.has(item.id));
 
     document.getElementById('dateInfo').textContent =
       `${formatDate(today())}｜取引先：${clientData.length}件`;
@@ -1314,6 +1600,22 @@ async function initClients() {
     }
 
     main.innerHTML = clientData.map((item, i) => renderClientCard(item, i)).join('');
+    // コンタクト履歴を非同期で各カードに表示
+    clientData.forEach((item, i) => loadLatestContact(item.id, i));
+    // ブラウザバック後の状態復元
+    clientData.forEach((item, i) => {
+      try {
+        const saved = sessionStorage.getItem('hf_mail_' + item.id);
+        if (saved) {
+          const { subject, body } = JSON.parse(saved);
+          renderClientMailSection(i, item, subject, body);
+        }
+        if (sessionStorage.getItem('hf_done_' + item.id)) {
+          const banner = sessionStorage.getItem('hf_done_' + item.id);
+          applyCardDone(i, banner);
+        }
+      } catch(e) {}
+    });
 
   } catch (err) {
     main.innerHTML = `
@@ -1326,91 +1628,10 @@ async function initClients() {
   }
 }
 
-// === 初期化 ===
-async function init() {
-  document.getElementById('dateInfo').textContent = `${formatDate(today())}｜読み込み中...`;
-
-  // フィルターボタンの状態を復元
-  document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.filter === currentFilter);
-  });
-
-  try {
-    // 送信者一覧・添付資料・定型文を並列取得
-    const [sendersRes, attachRes, templatesRes] = await Promise.all([
-      fetch('/api/senders'),
-      fetch('/api/attachments'),
-      fetch('/api/templates'),
-    ]);
-    senderAccounts = await sendersRes.json();
-    attachments = await attachRes.json();
-    templates = await templatesRes.json();
-
-    // 送信者ドロップダウン構築
-    const senderSel = document.getElementById('senderSelect');
-    const prevVal = senderSel.value;
-    senderSel.innerHTML = senderAccounts.map(s =>
-      `<option value="${s.id}">${s.label}（${s.email}）</option>`
-    ).join('');
-    if (prevVal) senderSel.value = prevVal;
-    // デフォルトを佳代に
-    if (!prevVal) senderSel.value = 'kayo';
-
-    // Notion案件取得（フィルター付き）
-    const res = await fetch('/api/notion/query', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assignee: currentFilter })
-    });
-    const data = await res.json();
-
-    if (data.error) throw new Error(data.error);
-
-    const pages = data.results || [];
-    caseData = pages.map(p => extractProps(p));
-
-    document.getElementById('dateInfo').textContent =
-      `${formatDate(today())}｜今日の対応：${caseData.length}件`;
-
-    const main = document.getElementById('main');
-
-    if (caseData.length === 0) {
-      main.innerHTML = `
-        <div class="empty">
-          <h2>今日のフォロー案件はありません</h2>
-          <p>お疲れ様です！ゆっくり森の時間を過ごしましょう。</p>
-        </div>
-      `;
-      return;
-    }
-
-    // カード描画
-    main.innerHTML = caseData.map((item, i) => renderCard(item, i)).join('');
-
-  } catch (err) {
-    document.getElementById('main').innerHTML = `
-      <div class="empty">
-        <h2>読み込みエラー</h2>
-        <p>${err.message}</p>
-        <p style="margin-top:12px;"><button onclick="location.reload()" class="btn btn-done">再試行</button></p>
-      </div>
-    `;
-  }
-}
-
 // === 起動 ===
-if (currentTab === 'clients') {
-  switchTab('clients');
-} else {
-  init();
-}
-
-// ハッシュ変更でタブ切り替え
-window.addEventListener('hashchange', () => {
-  const tab = location.hash === '#clients' ? 'clients' : 'sales';
-  if (tab !== currentTab) switchTab(tab);
-});
+initClients();
 </script>
+
 
 </body>
 </html>

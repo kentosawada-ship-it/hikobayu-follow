@@ -2,21 +2,149 @@ require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 const app = express();
-
 app.use(express.static('.'));
+app.use('/icons', express.static(path.join(__dirname, 'public/icons')));
 app.use(express.json());
+
+// --- Gmail OAuth2 設定 ---
+const GMAIL_TOKENS_FILE = path.join(__dirname, 'gmail-tokens.json');
+
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.OAUTH_REDIRECT_URL || 'http://localhost:3000/oauth2callback'
+);
+
+function loadGmailTokens() {
+  // ファイルから読む（ローカル開発）
+  let tokens = {};
+  try { tokens = JSON.parse(fs.readFileSync(GMAIL_TOKENS_FILE, 'utf8')); } catch {}
+
+  // 環境変数の refresh_token で上書き（Render 本番 / 永続化対応）
+  // 環境変数名: GMAIL_REFRESH_TOKEN_COMPANY / GMAIL_REFRESH_TOKEN_KAYO / GMAIL_REFRESH_TOKEN_KENTO
+  for (const { id } of SENDER_ACCOUNTS) {
+    const rt = process.env[`GMAIL_REFRESH_TOKEN_${id.toUpperCase()}`];
+    if (rt) tokens[id] = { ...(tokens[id] || {}), refresh_token: rt };
+  }
+  return tokens;
+}
+
+function saveGmailTokens(senderId, tokens) {
+  try {
+    const all = loadGmailTokens();
+    all[senderId] = tokens;
+    fs.writeFileSync(GMAIL_TOKENS_FILE, JSON.stringify(all, null, 2), 'utf8');
+  } catch (e) {
+    // Render 等のエフェメラルファイルシステムでは保存失敗しても動作継続
+    console.warn('gmail-tokens 保存スキップ（環境変数の refresh_token を使用）');
+  }
+}
+
+// OAuth2 認証URL生成
+app.get('/api/auth/google', (req, res) => {
+  const { senderId } = req.query;
+  if (!senderId) return res.status(400).send('senderId が必要です');
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: ['https://www.googleapis.com/auth/gmail.compose'],
+    state: senderId,
+  });
+  res.redirect(url);
+});
+
+// OAuth2 コールバック
+app.get('/oauth2callback', async (req, res) => {
+  const { code, state: senderId } = req.query;
+  try {
+    const { tokens } = await oauth2Client.getToken(code);
+    saveGmailTokens(senderId, tokens);
+    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId);
+    res.send(`
+      <html><body style="font-family:sans-serif;padding:40px;text-align:center;">
+        <h2>✅ 認証完了</h2>
+        <p>${sender?.label || senderId} の Gmail API 認証が完了しました。</p>
+        <p>このタブを閉じてください。</p>
+      </body></html>
+    `);
+  } catch (err) {
+    res.status(500).send('認証エラー: ' + err.message);
+  }
+});
+
+// Gmail API で下書き作成
+app.post('/api/create-gmail-draft', async (req, res) => {
+  try {
+    const { to, subject, htmlBody, senderId } = req.body;
+    const senderAccount = SENDER_ACCOUNTS.find(s => s.id === senderId);
+    const tokens = loadGmailTokens()[senderId];
+    if (!tokens) {
+      return res.status(401).json({
+        error: `${senderId} の認証が未完了です。`,
+        authUrl: `/api/auth/google?senderId=${senderId}`
+      });
+    }
+
+    const client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.OAUTH_REDIRECT_URL || 'http://localhost:3000/oauth2callback'
+    );
+    client.setCredentials(tokens);
+
+    // トークン自動更新をキャッチして保存
+    client.on('tokens', (newTokens) => {
+      const merged = { ...tokens, ...newTokens };
+      saveGmailTokens(senderId, merged);
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: client });
+
+    // MIME メッセージ組み立て
+    const ccAddresses = (senderAccount?.cc || []).join(', ');
+    const mimeLines = [
+      'Content-Type: text/html; charset=UTF-8',
+      'MIME-Version: 1.0',
+      `To: ${to}`,
+      ...(ccAddresses ? [`Cc: ${ccAddresses}`] : []),
+      `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+      '',
+      htmlBody,
+    ];
+    const raw = Buffer.from(mimeLines.join('\r\n'))
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    const draft = await gmail.users.drafts.create({
+      userId: 'me',
+      requestBody: { message: { raw } },
+    });
+
+    const draftUrl = `https://mail.google.com/mail/#drafts/${draft.data.message.id}`;
+    res.json({ ok: true, draftUrl });
+  } catch (err) {
+    console.error('create-gmail-draft error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
-const CLIENTS_DB_ID = 'cab14f67-eb77-4bdb-ae06-8267188cfa76';
+const CLIENTS_DB_ID = '748fc885-8796-49a2-8d91-aa1c131f8b58';
+const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
 
 // --- 送信アドレス設定 ---
 const SENDER_ACCOUNTS = [
-  { id: 'company', label: 'HIKOBAYU（会社）', email: process.env.EMAIL_COMPANY || 'info@hikobayu.com', signature: 'HIKOBAYU' },
-  { id: 'kayo', label: '澤田佳代子', email: process.env.EMAIL_KAYO || 'someco@hikobayu.com', signature: 'HIKOBAYU　澤田佳代子' },
-  { id: 'kento', label: '澤田健人', email: process.env.EMAIL_KENTO || 'kento.sawada@hikobayu.com', signature: 'HIKOBAYU　澤田健人' },
+  { id: 'company', label: 'HIKOBAYU（会社）', email: process.env.EMAIL_COMPANY || 'info@hikobayu.com',         signature: 'HIKOBAYU', cc: ['someco@hikobayu.com', 'kento.sawada@hikobayu.com'], appPassword: process.env.GMAIL_APP_PASSWORD_COMPANY || '' },
+  { id: 'kayo',    label: '澤田佳代子',       email: process.env.EMAIL_KAYO    || 'someco@hikobayu.com',        signature: 'HIKOBAYU', cc: ['info@hikobayu.com', 'kento.sawada@hikobayu.com'],  appPassword: process.env.GMAIL_APP_PASSWORD_KAYO    || '' },
+  { id: 'kento',   label: '澤田健人',         email: process.env.EMAIL_KENTO   || 'kento.sawada@hikobayu.com', signature: 'HIKOBAYU', cc: ['info@hikobayu.com', 'someco@hikobayu.com'],         appPassword: process.env.GMAIL_APP_PASSWORD_KENTO   || '' },
 ];
 
 // --- 責任者のNotionユーザーIDマッピング ---
@@ -127,6 +255,213 @@ app.delete('/api/templates/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// --- HTMLメールテンプレート CRUD ---
+const EMAIL_TEMPLATES_FILE = path.join(__dirname, 'email-templates.json');
+
+function loadEmailTemplates() {
+  try { return JSON.parse(fs.readFileSync(EMAIL_TEMPLATES_FILE, 'utf8')); }
+  catch { return []; }
+}
+
+function saveEmailTemplates(data) {
+  fs.writeFileSync(EMAIL_TEMPLATES_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+app.get('/api/email-templates', (req, res) => res.json(loadEmailTemplates()));
+
+app.post('/api/email-templates', (req, res) => {
+  const list = loadEmailTemplates();
+  const item = { id: Date.now().toString(), ...req.body };
+  list.push(item);
+  saveEmailTemplates(list);
+  res.json(item);
+});
+
+app.put('/api/email-templates/:id', (req, res) => {
+  const list = loadEmailTemplates();
+  const idx = list.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  list[idx] = { ...list[idx], ...req.body };
+  saveEmailTemplates(list);
+  res.json(list[idx]);
+});
+
+app.delete('/api/email-templates/:id', (req, res) => {
+  let list = loadEmailTemplates();
+  list = list.filter(t => t.id !== req.params.id);
+  saveEmailTemplates(list);
+  res.json({ ok: true });
+});
+
+// --- 署名テンプレート ---
+const SIGNATURES = {
+  company: `
+    合同会社HIKOBAYU<br>
+    62-3 Motomachi, Niseko, Hokkaido<br>
+    <span style="color:#c8bfb0">─────────────────</span><br>
+    info@hikobayu.com<br>
+    hikobayu.com
+  `,
+  kayo: `
+    澤田 佳代子 &nbsp; Kayoko Sawada<br>
+    合同会社HIKOBAYU &nbsp; 代表<br>
+    <span style="color:#c8bfb0">─────────────────</span><br>
+    62-3 Motomachi, Niseko, Hokkaido<br>
+    someco@hikobayu.com<br>
+    hikobayu.com
+  `,
+  kento: `
+    澤田 健人 &nbsp; Kento Sawada<br>
+    合同会社HIKOBAYU &nbsp; Director<br>
+    <span style="color:#c8bfb0">─────────────────</span><br>
+    62-3 Motomachi, Niseko, Hokkaido<br>
+    kento.sawada@hikobayu.com<br>
+    hikobayu.com
+  `,
+};
+
+// --- アイコン（base64埋め込み・localhost不要・Gmail対応）---
+const ICON_INSTAGRAM = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/instagram_icon_10cd4c36-0d53-4763-87dd-023349ffc59e.svg?v=1775885815';
+const ICON_FACEBOOK  = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/facebook_icon_6c909bfe-8de4-431a-a566-9582bb369ef8.svg?v=1775885815';
+
+// --- HTML メール構築 ---
+function buildHtmlEmail(bodyHtml, imageUrl, senderId) {
+  const imageSection = imageUrl
+    ? `<div style="margin:16px 0;"><img src="${imageUrl}" alt="" style="display:block;width:100%;max-width:100%;height:auto;border:0;"></div>`
+    : '';
+
+  const styledBody = bodyHtml
+    .replace(/<p>/g, '<p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.8;">')
+    .replace(/<p /g, '<p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.8;" ')
+    .replace(/<ul>/g, '<ul style="margin:0 0 16px;padding-left:20px;">')
+    .replace(/<ol>/g, '<ol style="margin:0 0 16px;padding-left:20px;">')
+    .replace(/<li>/g, '<li style="margin:0 0 4px;">');
+
+  const signature = SIGNATURES[senderId] || SIGNATURES.company;
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f9f9f7;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f9f9f7">
+    <tr>
+      <td align="center" style="padding:32px 16px 32px;">
+        <table cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;">
+          <tr>
+            <td align="center" style="padding:32px 40px 24px;border-bottom:1px solid #f0ede8;">
+              <img src="https://cdn.shopify.com/s/files/1/0608/7904/4846/files/logo_hikobayu_c468359f-75fc-4852-9a09-8c1331fadb24.png?v=1760691427" width="160" alt="HIKOBAYU" style="display:block;max-width:160px;height:auto;border:0;">
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 40px;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',Helvetica,Arial,sans-serif;font-size:15px;color:#333333;line-height:1.8;">
+              ${styledBody}
+              ${imageSection}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;text-align:center;background-color:#f9f7f4;">
+              <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 16px;">
+                <tr>
+                  <td style="padding:0 6px;">
+                    <a href="https://www.instagram.com/hikobayu/?hl=ja">
+                      <img src="${ICON_INSTAGRAM}" width="32" height="32" alt="Instagram" style="display:block;border:0;">
+                    </a>
+                  </td>
+                  <td style="padding:0 6px;">
+                    <a href="https://www.facebook.com/hikobayu/?locale=ja_JP">
+                      <img src="${ICON_FACEBOOK}" width="32" height="32" alt="Facebook" style="display:block;border:0;">
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="font-family:Georgia,serif;font-size:12px;color:#7a7060;line-height:1.8;padding:0 20px 24px;background-color:#f9f7f4;">
+              ${signature}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+// --- Gmail下書き準備（compose URL + HTMLクリップボード用） ---
+app.post('/api/prepare-gmail-draft', async (req, res) => {
+  try {
+    const { to, subject, bodyHtml, imageUrl, senderId, facilityName, contactName } = req.body;
+
+    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId);
+    if (!sender) return res.status(400).json({ error: '送信者が見つかりません' });
+
+    // 変数置換
+    const vars = { facility_name: facilityName || '', name: contactName || '' };
+    const finalSubject = (subject || '')
+      .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+      .replace(/\{\{name\}\}/g, vars.name);
+    const finalBodyHtml = (bodyHtml || '')
+      .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+      .replace(/\{\{name\}\}/g, vars.name);
+
+    const htmlEmail = buildHtmlEmail(finalBodyHtml, imageUrl, senderId);
+
+    // Gmail compose URL（to・subject・authuser を自動セット）
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(finalSubject)}&authuser=${encodeURIComponent(sender.email)}&tf=1`;
+
+    res.json({ ok: true, gmailUrl, htmlEmail });
+  } catch (err) {
+    console.error('prepare-gmail-draft error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 送信完了後のNotion記録 ---
+app.post('/api/log-email-sent', async (req, res) => {
+  try {
+    const { clientId, clientName, subject, contactDate } = req.body;
+
+    const properties = {
+      'タイトル': { title: [{ text: { content: `${contactDate} ${clientName} メール送信` } }] },
+      '接触日': { date: { start: contactDate } },
+      '接触種別': { select: { name: 'メール送信' } },
+      'レスポンス有無': { select: { name: '未確認' } },
+    };
+
+    if (clientId) {
+      properties['取引先'] = { relation: [{ id: clientId }] };
+    }
+    if (subject) {
+      properties['内容メモ'] = { rich_text: [{ text: { content: `件名: ${subject}` } }] };
+    }
+
+    const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
+    const response = await fetch(`https://api.notion.com/v1/pages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        parent: { database_id: CONTACTS_DB_ID },
+        properties
+      })
+    });
+
+    const data = await response.json();
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error('log-email-sent error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- API: メール修正履歴 ---
 app.get('/api/email-history', (req, res) => {
   res.json(loadHistory());
@@ -187,7 +522,7 @@ app.post('/api/claude/generate', async (req, res) => {
     const { caseInfo, senderId } = req.body;
 
     // 送信者の署名を決定
-    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[1]; // デフォルト佳代
+    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[0]; // デフォルト佳代
 
     // ステータスに応じたメール方針
     const statusGuide = {
@@ -337,24 +672,19 @@ app.patch('/api/notion/update/:pageId', async (req, res) => {
 // --- 取引先一覧取得 ---
 app.post('/api/clients/query', async (req, res) => {
   try {
-    const { channel, followStatus, limit } = req.body || {};
+    const { channel, stage } = req.body || {};
     const filters = [];
 
     // チャネルフィルター
     if (channel === 'freee') {
-      filters.push({
-        or: [
-          { property: 'ソース', select: { equals: 'freee' } },
-          { property: 'ソース', select: { equals: '直接' } },
-        ]
-      });
+      filters.push({ property: 'ソース', select: { equals: '直接' } });
     } else if (channel === 'goooods') {
       filters.push({ property: 'ソース', select: { equals: 'goooods' } });
     }
 
-    // フォロー状況フィルター
-    if (followStatus && followStatus !== 'all') {
-      filters.push({ property: 'フォロー状況', select: { equals: followStatus } });
+    // ステージフィルター
+    if (stage && stage !== 'all') {
+      filters.push({ property: 'ステージ', select: { equals: stage } });
     }
 
     const queryBody = {
@@ -386,7 +716,10 @@ app.post('/api/clients/query', async (req, res) => {
         }
       );
       const data = await response.json();
-      if (data.error) { res.json(data); return; }
+      if (data.object === 'error') {
+        console.error('Notion API error:', data.code, data.message);
+        return res.status(502).json({ error: `Notion: ${data.message}`, code: data.code });
+      }
       allResults = allResults.concat(data.results || []);
       hasMore = data.has_more;
       startCursor = data.next_cursor;
@@ -402,18 +735,18 @@ app.post('/api/clients/query', async (req, res) => {
 app.patch('/api/clients/update/:pageId', async (req, res) => {
   try {
     const { pageId } = req.params;
-    const { nextFollowDate, followStatus, followType } = req.body;
+    const { nextFollowDate, lastFollowDate, nextAction } = req.body;
 
     const properties = {};
 
     if (nextFollowDate) {
       properties['次回フォロー日'] = { date: { start: nextFollowDate } };
     }
-    if (followStatus) {
-      properties['フォロー状況'] = { select: { name: followStatus } };
+    if (lastFollowDate) {
+      properties['前回フォロー日'] = { date: { start: lastFollowDate } };
     }
-    if (followType && followType.length > 0) {
-      properties['フォロー種別'] = { multi_select: followType.map(t => ({ name: t })) };
+    if (nextAction) {
+      properties['次のアクション'] = { rich_text: [{ text: { content: nextAction } }] };
     }
 
     const response = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
@@ -430,6 +763,57 @@ app.patch('/api/clients/update/:pageId', async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('Clients update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- コンタクト履歴 作成 ---
+app.post('/api/contacts/create', async (req, res) => {
+  try {
+    const { clientId, clientName, subject, contactDate,
+            templateNames, attachNames, senderEmail, contactEmail } = req.body;
+
+    const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    const memoLines = [`件名: ${subject || ''}`, `送信日時: ${now}`];
+    if (senderEmail) memoLines.push(`送信者: ${senderEmail}`);
+    if (contactEmail) memoLines.push(`送信先メール: ${contactEmail}`);
+    if (templateNames) memoLines.push(`使用定型文: ${templateNames}`);
+    if (attachNames)   memoLines.push(`添付資料: ${attachNames}`);
+    const memo = memoLines.join('\n');
+
+    const properties = {
+      'タイトル': { title: [{ text: { content: `${contactDate} ${clientName} メール送信` } }] },
+      '接触日': { date: { start: contactDate } },
+      '接触種別': { select: { name: 'メール送信' } },
+      'レスポンス有無': { select: { name: '未確認' } },
+      '内容メモ': { rich_text: [{ text: { content: memo.slice(0, 2000) } }] },
+    };
+
+    if (clientId) {
+      properties['取引先'] = { relation: [{ id: clientId }] };
+    }
+
+    const response = await fetch('https://api.notion.com/v1/pages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        parent: { database_id: CONTACTS_DB_ID },
+        properties
+      })
+    });
+
+    const data = await response.json();
+    if (data.object === 'error') {
+      console.error('Contact create error:', data);
+      return res.status(400).json({ error: data.message });
+    }
+    res.json({ ok: true, id: data.id });
+  } catch (err) {
+    console.error('Contacts create error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -494,25 +878,22 @@ app.post('/api/notion/append-email/:pageId', async (req, res) => {
 app.post('/api/claude/generate-client', async (req, res) => {
   try {
     const { clientInfo, senderId } = req.body;
-    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[1];
+    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[0];
 
     const systemPrompt = `あなたはHIKOBAYUというアロマ・スキンケアブランドの営業担当です。
 既存取引先への案内メールを日本語で作成してください。
 
 【取引先情報】
 - 企業名: ${clientInfo.name}
-- 担当者: ${clientInfo.contact}
-- チャネル: ${clientInfo.channel}（freee=直接取引 / goooods=goooods経由）
-- 直近の取引: ${clientInfo.orderHistory}（${clientInfo.lastOrderDate}）
-- 案内種別: ${(clientInfo.followTypes || []).join('、')}
+- 担当者: ${clientInfo.contact || '（不明）'}
+- チャネル: ${clientInfo.channel || '（不明）'}（freee=直接取引 / goooods=goooods経由）
+- 業態: ${clientInfo.business || 'なし'}
+- ステージ: ${clientInfo.stage || 'なし'}
+- 取引商品: ${clientInfo.orderHistory || 'なし'}
+- 前回の対応内容: ${clientInfo.previousAction || 'なし'}
 - メモ: ${clientInfo.memo || 'なし'}
-- 補足: ${clientInfo.extraContext || 'なし'}
-
-【案内する内容】（attachmentsから選ばれたものをメール末尾にURLで記載）
-- HIKOBAYUコンセプト資料
-- Ambient Scent（ASシリーズ）紹介
-- WAシリーズ紹介
-- 卸価格表
+- 定型文・補足内容: ${clientInfo.extraContext || 'なし'}
+- 添付予定資料: ${clientInfo.attachNames || 'なし'}
 
 【チャネル別の注意点】
 - freee/直接取引の場合: 直接卸価格を案内。「いつもありがとうございます」から始める。
@@ -524,7 +905,11 @@ app.post('/api/claude/generate-client', async (req, res) => {
 - 件名は短く具体的に。
 - 署名は「${sender.signature}」で固定
 
-必ずJSON形式のみで返してください:
+【宛名のルール】
+- 担当者名は必ず「姓　名」の順（日本語式）で使用すること。
+- 例：「健人　澤田」と入力されていても「澤田健人様」と修正して使用する。
+
+必ずJSON形式のみで返してください（前後に余計な文字を入れないこと）:
 {"subject": "件名", "body": "本文"}`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -551,6 +936,237 @@ app.post('/api/claude/generate-client', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// --- コンタクト履歴 最新1件取得 ---
+app.get('/api/contacts/latest/:clientId', async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    const response = await fetch(
+      `https://api.notion.com/v1/databases/${CONTACTS_DB_ID}/query`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${NOTION_TOKEN}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          filter: {
+            property: '取引先',
+            relation: { contains: clientId }
+          },
+          sorts: [{ property: '接触日', direction: 'descending' }],
+          page_size: 1
+        })
+      }
+    );
+
+    const data = await response.json();
+    if (data.object === 'error') {
+      return res.status(400).json({ error: data.message });
+    }
+
+    const results = data.results || [];
+    if (results.length === 0) {
+      return res.json({ memo: null, date: null, type: null });
+    }
+
+    const page = results[0];
+    const props = page.properties;
+    const memo = props['内容メモ']?.rich_text?.[0]?.plain_text || null;
+    const date = props['接触日']?.date?.start || null;
+    const type = props['接触種別']?.select?.name || null;
+
+    res.json({ memo, date, type });
+  } catch (err) {
+    console.error('Contacts latest error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- コンタクト履歴一覧取得 ---
+app.get('/api/contacts/list', async (req, res) => {
+  try {
+    const pageSize = parseInt(req.query.limit) || 50;
+    const response = await fetch(
+      `https://api.notion.com/v1/databases/${CONTACTS_DB_ID}/query`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${NOTION_TOKEN}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sorts: [{ property: '接触日', direction: 'descending' }],
+          page_size: pageSize
+        })
+      }
+    );
+    const data = await response.json();
+    if (data.object === 'error') return res.status(400).json({ error: data.message });
+
+    const results = (data.results || []).map(page => {
+      const p = page.properties;
+      const memo = p['内容メモ']?.rich_text?.[0]?.plain_text || '';
+      // 内容メモからフィールドをパース
+      const parse = (label) => {
+        const m = memo.match(new RegExp(`${label}: (.+)`));
+        return m ? m[1].trim() : '';
+      };
+      return {
+        id: page.id,
+        title: p['タイトル']?.title?.[0]?.plain_text || '',
+        contactDate: p['接触日']?.date?.start || '',
+        clientId: p['取引先']?.relation?.[0]?.id || '',
+        subject: parse('件名'),
+        sentAt: parse('送信日時'),
+        senderEmail: parse('送信者'),
+        contactEmail: parse('送信先メール'),
+        templateNames: parse('使用定型文'),
+        attachNames: parse('添付資料'),
+      };
+    });
+
+    res.json({ results });
+  } catch (err) {
+    console.error('contacts/list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 今日送信済みの取引先IDリスト ---
+app.get('/api/sent-today', async (req, res) => {
+  try {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const response = await fetch(
+      `https://api.notion.com/v1/databases/${CONTACTS_DB_ID}/query`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${NOTION_TOKEN}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          filter: { property: '接触日', date: { equals: todayStr } },
+          page_size: 100
+        })
+      }
+    );
+    const data = await response.json();
+    if (data.object === 'error') return res.status(502).json({ error: data.message });
+
+    const clientIds = [...new Set(
+      (data.results || [])
+        .map(p => p.properties['取引先']?.relation?.[0]?.id)
+        .filter(Boolean)
+    )];
+    res.json({ clientIds });
+  } catch (err) {
+    console.error('sent-today error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 空レコード削除 ---
+app.post('/api/clients/delete-empty', async (req, res) => {
+  try {
+    let allResults = [];
+    let hasMore = true;
+    let startCursor = undefined;
+
+    while (hasMore) {
+      const reqBody = { page_size: 100 };
+      if (startCursor) reqBody.start_cursor = startCursor;
+
+      const response = await fetch(
+        `https://api.notion.com/v1/databases/${CLIENTS_DB_ID}/query`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${NOTION_TOKEN}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(reqBody)
+        }
+      );
+      const data = await response.json();
+      allResults = allResults.concat(data.results || []);
+      hasMore = data.has_more;
+      startCursor = data.next_cursor;
+    }
+
+    const emptyPages = allResults.filter(page => {
+      const p = page.properties;
+      const name = p['企業名']?.title?.[0]?.plain_text || '';
+      const contact = p['担当者名']?.rich_text?.[0]?.plain_text || '';
+      const email = p['メールアドレス']?.email || '';
+      return !name && !contact && !email;
+    });
+
+    console.log(`空レコード: ${emptyPages.length}件 削除します`);
+
+    const results = [];
+    for (const page of emptyPages) {
+      console.log(`  削除: ${page.id}`);
+      const r = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${NOTION_TOKEN}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ archived: true })
+      });
+      const d = await r.json();
+      results.push({ id: page.id, ok: d.object === 'page' });
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    res.json({ deleted: results.length, results });
+  } catch (err) {
+    console.error('Delete empty error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`HIKOBAYU Follow List: http://localhost:${PORT}`);
+
+  // --- Browser-Sync: 別PCからも自動リロード ---
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      const bs = require('browser-sync').create();
+      bs.init({
+        proxy: `localhost:${PORT}`,
+        port: 3001,
+        ui: { port: 3002 },
+        files: [
+          '*.html',
+          'public/**/*',
+          '*.css',
+          '*.js',
+          '!node_modules/**',
+        ],
+        open: false,
+        notify: true,
+        // LAN上の別PCからアクセス可能にする
+        // 妻のPCから http://<このPCのIP>:3001 でアクセス
+        listen: '0.0.0.0',
+      });
+      const os = require('os');
+      const nets = os.networkInterfaces();
+      for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+          if (net.family === 'IPv4' && !net.internal) {
+            console.log(`  LAN access: http://${net.address}:3001`);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('browser-sync not available, skipping:', e.message);
+    }
+  }
 });
