@@ -471,6 +471,86 @@
       font-size: 15px;
     }
 
+    /* Phase3 タブバー */
+    .phase3-tab-bar {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid #e0e8de;
+      margin-bottom: 16px;
+    }
+    .phase3-tab-btn {
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: #888;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .phase3-tab-btn.active { color: #2d5a27; border-bottom-color: #2d5a27; }
+    .phase3-tab-btn:hover { color: #5a9e4b; }
+    .tab-badge {
+      background: #e0e8de;
+      color: #2d5a27;
+      border-radius: 10px;
+      padding: 1px 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .phase3-tab-btn.active .tab-badge { background: #2d5a27; color: #fff; }
+
+    /* Phase3 クイックアクション */
+    .card-quick-actions {
+      padding: 8px 20px;
+      display: flex;
+      gap: 8px;
+      border-top: 1px solid #f0f0f0;
+      background: #fafafa;
+      flex-wrap: wrap;
+    }
+    .btn-skip {
+      padding: 5px 12px;
+      border: 1px solid #d4d4d4;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #fff;
+      color: #555;
+    }
+    .btn-skip:hover { background: #f0f7ee; border-color: #b6d9b0; color: #2d5a27; }
+    .btn-today-exclude {
+      padding: 5px 12px;
+      border: 1px solid #d4d4d4;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #fff;
+      color: #999;
+    }
+    .btn-today-exclude:hover { background: #f5f5f5; }
+
+    /* Phase3 フォロー遅延バッジ */
+    .overdue-banner {
+      padding: 5px 20px;
+      background: #fff8f0;
+      border-top: 1px solid #fde8c8;
+      font-size: 12px;
+      color: #c05a00;
+    }
+    .new-lead-banner {
+      padding: 5px 20px;
+      background: #f0f7ff;
+      border-top: 1px solid #bfdbfe;
+      font-size: 12px;
+      color: #1e40af;
+    }
+
     /* レスポンシブ */
     @media (max-width: 600px) {
       .header { padding: 14px 16px; }
@@ -493,8 +573,7 @@
         <button onclick="showSentHistory()" id="btn-sent-history">&#x1f4ec; 送信済み一覧</button>
         <button onclick="openAttachSettings()">&#x1f4ce; 資料管理</button>
         <button onclick="openTemplateSettings()">&#x1f4dd; 定型文管理</button>
-        <button id="btn-excluded-list" onclick="showExcludedList()" style="color:#c0392b;border-color:#f5c6cb;">&#x1f6ab; 除外一覧</button>
-        <button onclick="window.open('https://www.notion.so/748fc885879649a28d91aa1c131f8b58')">&#x1f4ca; Notion</button>
+<button onclick="window.open('https://www.notion.so/748fc885879649a28d91aa1c131f8b58')">&#x1f4ca; Notion</button>
       </div>
     </div>
     <div id="clientFilters">
@@ -503,14 +582,6 @@
         <button class="filter-btn active" data-channel="all" onclick="setClientChannel('all')">すべて</button>
         <button class="filter-btn" data-channel="freee" onclick="setClientChannel('freee')">freee/直接</button>
         <button class="filter-btn" data-channel="goooods" onclick="setClientChannel('goooods')">goooods</button>
-      </div>
-      <div class="client-filter-bar" style="margin-top:6px;">
-        <label>ステージ：</label>
-        <button class="filter-btn active" data-follow="all" onclick="setClientFollowFilter('all')">すべて</button>
-        <button class="filter-btn" data-follow="新規リード" onclick="setClientFollowFilter('新規リード')">新規リード</button>
-        <button class="filter-btn" data-follow="商談中" onclick="setClientFollowFilter('商談中')">商談中</button>
-        <button class="filter-btn" data-follow="取引中" onclick="setClientFollowFilter('取引中')">取引中</button>
-        <button class="filter-btn" data-follow="休眠" onclick="setClientFollowFilter('休眠')">休眠</button>
       </div>
       <div class="sender-select-wrap">
         <label>送信元：</label>
@@ -538,23 +609,7 @@
     </div>
   </div>
 
-  <!-- 除外一覧ビュー -->
-  <div id="excluded-list-view" style="display:none;">
-    <div class="container">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-top:4px;">
-        <button onclick="hideExcludedList()" style="background:none;border:1px solid #ccc;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">← フォロー一覧へ戻る</button>
-        <h2 style="font-size:16px;font-weight:700;color:#c0392b;margin:0;">🚫 送信除外一覧</h2>
-        <span id="excluded-list-count" style="font-size:12px;color:#888;"></span>
-      </div>
-      <div style="background:#fff8f8;border:1px solid #f5c6cb;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#7b1f1f;line-height:1.7;">
-        ⚠️ 以下の取引先は「<strong>原料仕入先・製造委託先</strong>」または「<strong>メールアドレス未登録</strong>」のため、フォロー候補から除外されています。<br>
-        送信ボタンは表示されません（誤送信防止）。
-      </div>
-      <div id="excluded-list-main"></div>
-    </div>
-  </div>
-
-  <!-- 添付資料設定モーダル -->
+<!-- 添付資料設定モーダル -->
   <div class="modal-overlay" id="attachModal">
     <div class="modal">
       <h2>&#x1f4ce; よく使う添付資料</h2>
@@ -611,8 +666,48 @@ let templates = [];
 let clientData = [];
 let excludedClientData = []; // 取引区分除外レコード
 let clientChannel = 'all';
-let clientFollowFilter = 'all';
+let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded'
 let clientOriginalMails = {};
+
+// === Phase3 タブ用ユーティリティ ===
+function daysSince(dateStr) {
+  if (!dateStr) return 0;
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function getSkippedClients() {
+  try { return new Set(JSON.parse(sessionStorage.getItem('hf_session_skip') || '[]')); }
+  catch(e) { return new Set(); }
+}
+
+function addToSessionSkip(clientId) {
+  const s = getSkippedClients();
+  s.add(clientId);
+  try { sessionStorage.setItem('hf_session_skip', JSON.stringify([...s])); } catch(e) {}
+}
+
+function getTabData(tab) {
+  const todayStr = today();
+  const skipped = getSkippedClients();
+  if (tab === 'today') {
+    return clientData.filter(item =>
+      !skipped.has(item.id) &&
+      item.nextFollowDate && item.nextFollowDate <= todayStr
+    );
+  }
+  if (tab === 'new-leads') {
+    return clientData.filter(item =>
+      !skipped.has(item.id) &&
+      item.stage === '新規リード' &&
+      !item.nextFollowDate &&
+      daysSince(item.createdTime) >= 3
+    );
+  }
+  if (tab === 'excluded') {
+    return excludedClientData;
+  }
+  return [];
+}
 
 // === localStorage: 送信済み非表示リスト ===
 const LS_HIDDEN_KEY = 'hf_hidden_clients';
@@ -1073,13 +1168,6 @@ function setClientChannel(ch) {
   initClients();
 }
 
-function setClientFollowFilter(f) {
-  clientFollowFilter = f;
-  document.querySelectorAll('[data-follow]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.follow === f);
-  });
-  initClients();
-}
 
 
 // 送信除外カテゴリ（server.js の EXCLUDED_CATEGORIES と同一・ハードコード）
@@ -1109,6 +1197,7 @@ function extractClientProps(page) {
     nextAction: p['次のアクション']?.rich_text?.[0]?.plain_text || '',
     latestContactMemo: '', // コンタクト履歴から非同期で埋める
     memo: p['メモ']?.rich_text?.[0]?.plain_text || '',
+    createdTime: page.created_time || '',
   };
 }
 
@@ -1139,12 +1228,25 @@ function renderClientCard(item, index) {
     <div id="memo-full-${index}" style="display:none;font-size:12px;background:#f8f8f4;border:1px solid #ddd;border-radius:4px;padding:6px 8px;margin-top:2px;white-space:pre-wrap;max-height:120px;overflow-y:auto;">${escapeHtml(item.memo)}</div>
   ` : '';
 
+  // フォロー遅延・初回アプローチバナー
+  const overdueDays = item.nextFollowDate
+    ? Math.floor((Date.now() - new Date(item.nextFollowDate + 'T00:00:00').getTime()) / 86400000)
+    : null;
+  const overdueBanner = overdueDays !== null && overdueDays > 0
+    ? `<div class="overdue-banner">⏰ 次回フォロー日を ${overdueDays} 日超過しています</div>`
+    : '';
+  const isNewLead = item.stage === '新規リード' && !item.nextFollowDate && daysSince(item.createdTime) >= 3;
+  const newLeadBanner = isNewLead
+    ? `<div class="new-lead-banner">🌱 登録から ${daysSince(item.createdTime)} 日経過・初回アプローチのタイミングです</div>`
+    : '';
+
   return `
     <div class="card" id="client-card-${index}">
       <div class="card-header">
         <span class="card-title">${escapeHtml(item.name)}</span>
         <div class="card-badges">${chBadge}${stageBadge}${bizBadge}</div>
       </div>
+      ${overdueBanner}${newLeadBanner}
       <div class="card-info">
         ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
         ${item.email ? `<span>&#x1f4e7; ${escapeHtml(item.email)}</span>` : ''}
@@ -1153,6 +1255,11 @@ function renderClientCard(item, index) {
         ${item.nextFollowDate ? `<span>&#x1f4c5; 次回：${item.nextFollowDate}</span>` : '<span>&#x1f4c5; 次回：未設定</span>'}
         ${item.nextAction ? `<span>&#x1f4cc; ${escapeHtml(item.nextAction)}</span>` : ''}
         ${memoHtml}
+      </div>
+      <div class="card-quick-actions">
+        <button class="btn btn-regen" onclick="generateClientMail(${index})" style="padding:6px 14px;font-size:13px;">✉ メール作成</button>
+        <button class="btn-skip" onclick="skipClient(${index})">⏭ スキップ（次回+7日）</button>
+        <button class="btn-today-exclude" onclick="excludeClient(${index})">✕ 今日はスキップ</button>
       </div>
       <div class="card-collapsible">
       <div class="context-section" style="padding-bottom:10px;">
@@ -1478,66 +1585,174 @@ async function markClientDone(index) {
 }
 
 
-// === 除外一覧 ===
-function showExcludedList() {
-  document.getElementById('main').style.display = 'none';
-  document.getElementById('clientFilters').style.display = 'none';
-  document.getElementById('sent-history-view').style.display = 'none';
-  document.getElementById('excluded-list-view').style.display = 'block';
-  document.getElementById('btn-excluded-list').style.background = '#fff8f8';
-  renderExcludedList();
+// === Phase3 タブ ===
+function renderWithTabs() {
+  const main = document.getElementById('main');
+  const todayCnt   = getTabData('today').length;
+  const newCnt     = getTabData('new-leads').length;
+  const excludeCnt = getTabData('excluded').length;
+
+  main.innerHTML = `
+    <div class="phase3-tab-bar">
+      <button class="phase3-tab-btn ${activeTab==='today'?'active':''}" data-tab="today" onclick="switchTab('today')">
+        今日のフォロー候補 <span class="tab-badge">${todayCnt}</span>
+      </button>
+      <button class="phase3-tab-btn ${activeTab==='new-leads'?'active':''}" data-tab="new-leads" onclick="switchTab('new-leads')">
+        初回アプローチ待ち <span class="tab-badge">${newCnt}</span>
+      </button>
+      <button class="phase3-tab-btn ${activeTab==='excluded'?'active':''}" data-tab="excluded" onclick="switchTab('excluded')">
+        除外一覧 <span class="tab-badge">${excludeCnt}</span>
+      </button>
+    </div>
+    <div id="tab-content"></div>
+  `;
+  renderTabContent();
 }
 
-function hideExcludedList() {
-  document.getElementById('excluded-list-view').style.display = 'none';
-  document.getElementById('main').style.display = 'block';
-  document.getElementById('clientFilters').style.display = 'block';
-  document.getElementById('btn-excluded-list').style.background = '';
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.phase3-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  updateTabCounts();
+  renderTabContent();
 }
 
-function renderExcludedList() {
-  const el = document.getElementById('excluded-list-main');
-  const count = document.getElementById('excluded-list-count');
-  count.textContent = `（${excludedClientData.length} 件）`;
+function updateTabCounts() {
+  const counts = {
+    'today':    getTabData('today').length,
+    'new-leads':getTabData('new-leads').length,
+    'excluded': getTabData('excluded').length,
+  };
+  document.querySelectorAll('.phase3-tab-btn').forEach(btn => {
+    const badge = btn.querySelector('.tab-badge');
+    if (badge) badge.textContent = counts[btn.dataset.tab] ?? '';
+  });
+}
 
-  if (excludedClientData.length === 0) {
-    el.innerHTML = '<div class="empty"><h2>除外対象の取引先はありません</h2></div>';
+function renderTabContent() {
+  const el = document.getElementById('tab-content');
+  if (!el) return;
+  const data = getTabData(activeTab);
+
+  if (activeTab === 'excluded') {
+    if (data.length === 0) {
+      el.innerHTML = '<div class="empty"><h2>除外対象の取引先はありません</h2></div>';
+    } else {
+      el.innerHTML = `
+        <div style="background:#fff8f8;border:1px solid #f5c6cb;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#7b1f1f;">
+          ⚠️「原料仕入先・製造委託先」またはメールアドレス未登録のため送信除外されています。
+        </div>
+        ${data.map(item => renderExcludedCard(item)).join('')}`;
+    }
     return;
   }
 
-  el.innerHTML = excludedClientData.map(item => {
-    const reason = EXCLUDED_CATEGORIES.includes(item.transactionCategory)
-      ? `取引区分：${item.transactionCategory}`
-      : 'メールアドレス未登録';
-    const catBadge = item.transactionCategory
-      ? `<span class="badge" style="background:#fde8e8;color:#c0392b;">${escapeHtml(item.transactionCategory)}</span>`
-      : '';
-    const stageBadge = item.stage
-      ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.stage}</span>`
-      : '';
-    return `
-      <div class="card" style="border-color:#f5c6cb;opacity:0.85;">
-        <div class="card-header">
-          <span class="card-title" style="color:#888;">${escapeHtml(item.name)}</span>
-          <div class="card-badges">${catBadge}${stageBadge}</div>
-        </div>
-        <div class="card-info">
-          ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
-          ${item.email ? `<span>📧 ${escapeHtml(item.email)}</span>` : '<span style="color:#c0392b;">📧 メールアドレス未登録</span>'}
-          ${item.nextAction ? `<span>📌 ${escapeHtml(item.nextAction)}</span>` : ''}
-        </div>
-        <div style="padding:8px 20px 12px;background:#fff8f8;border-top:1px solid #f5c6cb;">
-          <span style="font-size:12px;color:#c0392b;">🚫 除外理由：${escapeHtml(reason)}</span>
-        </div>
-      </div>`;
+  if (data.length === 0) {
+    const msg = activeTab === 'today' ? '今日のフォロー候補はありません' : '初回アプローチ待ちの取引先はありません';
+    el.innerHTML = `<div class="empty"><h2>${msg}</h2></div>`;
+    return;
+  }
+
+  el.innerHTML = data.map(item => {
+    const idx = clientData.indexOf(item);
+    return renderClientCard(item, idx);
   }).join('');
+
+  // コンタクト履歴を非同期で各カードに表示
+  data.forEach(item => {
+    const idx = clientData.indexOf(item);
+    loadLatestContact(item.id, idx);
+  });
+
+  // ブラウザバック後の状態復元
+  data.forEach(item => {
+    const idx = clientData.indexOf(item);
+    try {
+      const saved = sessionStorage.getItem('hf_mail_' + item.id);
+      if (saved) {
+        const { subject, body } = JSON.parse(saved);
+        renderClientMailSection(idx, item, subject, body);
+      }
+      const doneBanner = sessionStorage.getItem('hf_done_' + item.id);
+      if (doneBanner) applyCardDone(idx, doneBanner);
+    } catch(e) {}
+  });
+}
+
+function renderExcludedCard(item) {
+  const reason = EXCLUDED_CATEGORIES.includes(item.transactionCategory)
+    ? `取引区分：${item.transactionCategory}`
+    : 'メールアドレス未登録';
+  const catBadge = item.transactionCategory
+    ? `<span class="badge" style="background:#fde8e8;color:#c0392b;">${escapeHtml(item.transactionCategory)}</span>`
+    : '';
+  const stageBadge = item.stage
+    ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.stage}</span>`
+    : '';
+  return `
+    <div class="card" style="border-color:#f5c6cb;opacity:0.85;">
+      <div class="card-header">
+        <span class="card-title" style="color:#888;">${escapeHtml(item.name)}</span>
+        <div class="card-badges">${catBadge}${stageBadge}</div>
+      </div>
+      <div class="card-info">
+        ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
+        ${item.email ? `<span>📧 ${escapeHtml(item.email)}</span>` : '<span style="color:#c0392b;">📧 メールアドレス未登録</span>'}
+        ${item.nextAction ? `<span>📌 ${escapeHtml(item.nextAction)}</span>` : ''}
+      </div>
+      <div style="padding:6px 20px 10px;background:#fff8f8;border-top:1px solid #f5c6cb;">
+        <span style="font-size:12px;color:#c0392b;">🚫 除外理由：${escapeHtml(reason)}</span>
+      </div>
+    </div>`;
+}
+
+// === Phase3: スキップ・除外アクション ===
+async function skipClient(index) {
+  const item = clientData[index];
+  if (!item) return;
+  const btn = document.querySelector(`#client-card-${index} .btn-skip`);
+  if (btn) { btn.disabled = true; btn.textContent = '更新中...'; }
+
+  const nextDate = addDays(today(), 7);
+  try {
+    const res = await fetch(`/api/clients/update/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nextFollowDate: nextDate }),
+    });
+    if (!res.ok) throw new Error('更新失敗');
+
+    item.nextFollowDate = nextDate;
+    addToSessionSkip(item.id);
+    const card = document.getElementById(`client-card-${index}`);
+    if (card) {
+      card.style.transition = 'opacity 0.3s';
+      card.style.opacity = '0';
+      setTimeout(() => { card.style.display = 'none'; updateTabCounts(); }, 300);
+    }
+  } catch(err) {
+    alert('スキップ処理エラー: ' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = '⏭ スキップ（次回+7日）'; }
+  }
+}
+
+function excludeClient(index) {
+  const item = clientData[index];
+  if (!item) return;
+  addToSessionSkip(item.id);
+  const card = document.getElementById(`client-card-${index}`);
+  if (card) {
+    card.style.transition = 'opacity 0.3s';
+    card.style.opacity = '0';
+    setTimeout(() => { card.style.display = 'none'; updateTabCounts(); }, 300);
+  }
 }
 
 // === 送信済み一覧 ===
 function showSentHistory() {
   document.getElementById('main').style.display = 'none';
   document.getElementById('clientFilters').style.display = 'none';
-  document.getElementById('excluded-list-view').style.display = 'none';
   document.getElementById('sent-history-view').style.display = 'block';
   document.getElementById('btn-sent-history').style.background = '#e8f5e3';
   initSentHistory();
@@ -1688,13 +1903,13 @@ async function initClients() {
       clientSenderSel.value = 'company';
     }
 
-    // 取引先データ取得
+    // 取引先データ取得（ステージはタブで制御するため常にall）
     const res = await fetch('/api/clients/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         channel: clientChannel,
-        stage: clientFollowFilter,
+        stage: 'all',
       })
     });
     const data = await res.json();
@@ -1722,41 +1937,7 @@ async function initClients() {
     document.getElementById('dateInfo').textContent =
       `${formatDate(today())}｜取引先：${clientData.length}件`;
 
-    // 除外件数バッジ更新
-    const excBtn = document.getElementById('btn-excluded-list');
-    if (excBtn) {
-      excBtn.textContent = excludedClientData.length > 0
-        ? `🚫 除外一覧（${excludedClientData.length}）`
-        : '🚫 除外一覧';
-    }
-
-    if (clientData.length === 0) {
-      main.innerHTML = `
-        <div class="empty">
-          <h2>該当する取引先はありません</h2>
-          <p>フィルター条件を変更してみてください。</p>
-        </div>
-      `;
-      return;
-    }
-
-    main.innerHTML = clientData.map((item, i) => renderClientCard(item, i)).join('');
-    // コンタクト履歴を非同期で各カードに表示
-    clientData.forEach((item, i) => loadLatestContact(item.id, i));
-    // ブラウザバック後の状態復元
-    clientData.forEach((item, i) => {
-      try {
-        const saved = sessionStorage.getItem('hf_mail_' + item.id);
-        if (saved) {
-          const { subject, body } = JSON.parse(saved);
-          renderClientMailSection(i, item, subject, body);
-        }
-        if (sessionStorage.getItem('hf_done_' + item.id)) {
-          const banner = sessionStorage.getItem('hf_done_' + item.id);
-          applyCardDone(i, banner);
-        }
-      } catch(e) {}
-    });
+    renderWithTabs();
 
   } catch (err) {
     main.innerHTML = `
