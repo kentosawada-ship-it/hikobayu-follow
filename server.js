@@ -163,6 +163,34 @@ const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
 // 送信除外カテゴリ（ハードコード・UI変更不可）
 const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
 
+// HTMLタグ除去
+function stripHtml(html) {
+  return (html || '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 日付文字列(YYYY-MM-DD)にn日加算
+function addDaysToDateStr(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
+}
+
+// 今日の日付をJSTで返す(YYYY-MM-DD)
+function getTodayJST() {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().split('T')[0];
+}
+
 // --- 送信アドレス設定 ---
 const SENDER_ACCOUNTS = [
   { id: 'company', label: 'HIKOBAYU（会社）', email: process.env.EMAIL_COMPANY || 'info@hikobayu.com',         signature: 'HIKOBAYU', cc: ['someco@hikobayu.com', 'kento.sawada@hikobayu.com'], appPassword: process.env.GMAIL_APP_PASSWORD_COMPANY || '' },
@@ -214,6 +242,82 @@ function loadHistory() {
 function saveHistory(data) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
+
+// --- メール送信後の統合記録（コンタクト履歴 + 取引先マスター更新）---
+// Gmail送信成功後に呼ぶ。Notion失敗は warnings で返し、送信自体は成功扱い。
+app.post('/api/record-email-sent', async (req, res) => {
+  const { clientId, clientName, bodyHtml, subject, sentDate,
+          senderEmail, contactEmail, templateNames, attachNames } = req.body;
+
+  const plainBody = stripHtml(bodyHtml).substring(0, 200);
+  const nextFollowDate = addDaysToDateStr(sentDate || getTodayJST(), 7);
+  const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+  const warnings = [];
+
+  // 1. コンタクト履歴に新規ページ作成
+  try {
+    const title = `${sentDate} ${clientName} メール送信`;
+    const memoLines = [];
+    if (plainBody)      memoLines.push(`本文（冒頭）: ${plainBody}`);
+    if (subject)        memoLines.push(`件名: ${subject}`);
+    if (senderEmail)    memoLines.push(`送信者: ${senderEmail}`);
+    if (contactEmail)   memoLines.push(`送信先メール: ${contactEmail}`);
+    if (templateNames)  memoLines.push(`使用定型文: ${templateNames}`);
+    if (attachNames)    memoLines.push(`添付資料: ${attachNames}`);
+    memoLines.push(`送信日時: ${now}`);
+
+    const properties = {
+      'タイトル':      { title:     [{ text: { content: title } }] },
+      '取引先':        { relation:  [{ id: clientId }] },
+      '接触日':        { date:      { start: sentDate || getTodayJST() } },
+      '接触種別':      { select:    { name: 'メール送信' } },
+      'レスポンス有無':{ select:    { name: 'レスポンスなし' } },
+      '内容メモ':      { rich_text: [{ text: { content: memoLines.join('\n').slice(0, 2000) } }] },
+      '次回フォロー日':{ date:      { start: nextFollowDate } },
+    };
+
+    const r = await fetch('https://api.notion.com/v1/pages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ parent: { database_id: CONTACTS_DB_ID }, properties }),
+    });
+    const d = await r.json();
+    if (d.object === 'error') throw new Error(d.message);
+  } catch (err) {
+    console.error('record-email-sent: contact_history error:', err.message);
+    warnings.push({ step: 'contact_history', error: err.message });
+  }
+
+  // 2. 取引先マスター更新（前回フォロー日・次回フォロー日・前回の対応内容）
+  try {
+    const r = await fetch(`https://api.notion.com/v1/pages/${clientId}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        properties: {
+          '前回フォロー日':   { date:      { start: sentDate || getTodayJST() } },
+          '次回フォロー日':   { date:      { start: nextFollowDate } },
+          '前回の対応内容':   { rich_text: [{ text: { content: plainBody } }] },
+        },
+      }),
+    });
+    const d = await r.json();
+    if (d.object === 'error') throw new Error(d.message);
+  } catch (err) {
+    console.error('record-email-sent: partner_update error:', err.message);
+    warnings.push({ step: 'partner_update', error: err.message });
+  }
+
+  res.json({ success: true, warnings });
+});
 
 // --- API: 送信アドレス一覧 ---
 app.get('/api/senders', (req, res) => {

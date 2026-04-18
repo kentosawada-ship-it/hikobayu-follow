@@ -919,15 +919,19 @@ async function sendViaGmail(index) {
     }
     if (!res.ok) throw new Error(data.error || 'エラー');
 
-    // Notion に自動記録（非同期）
-    fetch('/api/log-email-sent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId: item.id, clientName: item.name, subject, contactDate: today() }),
-    }).catch(e => console.warn('Notion記録エラー:', e));
-
-    // モーダル表示
-    _gmailPendingContext = { draftUrl: data.draftUrl, index };
+    // モーダル表示（Notion記録は confirmOpenGmail で行う）
+    _gmailPendingContext = {
+      draftUrl: data.draftUrl,
+      index,
+      notionPayload: {
+        clientId: item.id,
+        clientName: item.name,
+        subject,
+        bodyHtml: htmlBody,
+        senderEmail: (senderAccounts.find(s => s.id === senderId) || {}).email || '',
+        contactEmail: item.email || '',
+      },
+    };
     document.getElementById('gmailGuideModal').classList.add('show');
 
   } catch (err) {
@@ -941,6 +945,23 @@ function closeGmailModal() {
   _gmailPendingContext = null;
 }
 
+// Notion記録失敗時の警告表示
+function showNotionWarning(index, warnings) {
+  const card = document.getElementById(`client-card-${index}`);
+  if (!card) return;
+  if (card.querySelector('.notion-warn-banner')) return;
+  const steps = warnings.map(w => w.step).join('・');
+  const banner = document.createElement('div');
+  banner.className = 'notion-warn-banner';
+  banner.innerHTML = `
+    <div style="padding:10px 20px;background:#fffbeb;border-top:2px solid #f59e0b;font-size:12px;color:#92400e;line-height:1.6;">
+      ⚠️ メール送信は完了しましたが、Notion記録（${steps}）でエラーが発生しました。<br>
+      手動で Notion を確認してください。
+      <a href="https://www.notion.so/748fc885879649a28d91aa1c131f8b58" target="_blank" style="color:#2563eb;margin-left:8px;">Notionを開く →</a>
+    </div>`;
+  card.appendChild(banner);
+}
+
 // 「Gmailで開いてフォロー一覧に戻る」ボタン
 function confirmOpenGmail() {
   if (!_gmailPendingContext) return;
@@ -950,14 +971,21 @@ function confirmOpenGmail() {
   window.open(draftUrl, '_blank');
   document.getElementById('gmailGuideModal').classList.remove('show');
 
-  // Notion に記録（定型文直送・AI生成共通）
+  // Notion 統合記録（非同期・fire-and-forget + 失敗時警告）
   const payload = notionPayload || {};
   if (payload.clientId) {
-    fetch('/api/contacts/create', {
+    fetch('/api/record-email-sent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, contactDate: today() }),
-    }).catch(e => console.warn('Notion記録エラー:', e));
+      body: JSON.stringify({ ...payload, sentDate: today() }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.warnings && data.warnings.length > 0) {
+        showNotionWarning(index, data.warnings);
+      }
+    })
+    .catch(e => showNotionWarning(index, [{ step: 'network', error: e.message }]));
   }
 
   // 送信データを保存して「送信済みにする」バナーを表示
@@ -1330,6 +1358,7 @@ async function sendDirectViaGmail(index) {
         clientId: item.id,
         clientName: item.name,
         subject,
+        bodyHtml: htmlEmail,
         senderEmail: (senderAccounts.find(s => s.id === senderId) || {}).email || '',
         contactEmail: item.email || '',
         templateNames: Array.from(document.querySelectorAll(`#template-panel-${index} .attach-chip.selected`))
@@ -1687,14 +1716,6 @@ async function initClients() {
     );
 
     const allExtracted = pages.map(p => extractClientProps(p));
-
-    // === DEBUG Phase1 ===
-    console.log('[DEBUG] allExtracted件数:', allExtracted.length);
-    allExtracted.forEach(item => {
-      console.log(`[DEBUG] ${item.name} | transactionCategory: ${JSON.stringify(item.transactionCategory)} | isExcluded: ${isExcluded(item)}`);
-    });
-    // === END DEBUG ===
-
     excludedClientData = allExtracted.filter(item => isExcluded(item));
     clientData = allExtracted.filter(item => !isExcluded(item) && !hiddenIds.has(item.id));
 
