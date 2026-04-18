@@ -493,6 +493,7 @@
         <button onclick="showSentHistory()" id="btn-sent-history">&#x1f4ec; 送信済み一覧</button>
         <button onclick="openAttachSettings()">&#x1f4ce; 資料管理</button>
         <button onclick="openTemplateSettings()">&#x1f4dd; 定型文管理</button>
+        <button id="btn-excluded-list" onclick="showExcludedList()" style="color:#c0392b;border-color:#f5c6cb;">&#x1f6ab; 除外一覧</button>
         <button onclick="window.open('https://www.notion.so/748fc885879649a28d91aa1c131f8b58')">&#x1f4ca; Notion</button>
       </div>
     </div>
@@ -534,6 +535,22 @@
         <span id="sent-history-count" style="font-size:12px;color:#888;"></span>
       </div>
       <div id="sent-history-main"></div>
+    </div>
+  </div>
+
+  <!-- 除外一覧ビュー -->
+  <div id="excluded-list-view" style="display:none;">
+    <div class="container">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-top:4px;">
+        <button onclick="hideExcludedList()" style="background:none;border:1px solid #ccc;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">← フォロー一覧へ戻る</button>
+        <h2 style="font-size:16px;font-weight:700;color:#c0392b;margin:0;">🚫 送信除外一覧</h2>
+        <span id="excluded-list-count" style="font-size:12px;color:#888;"></span>
+      </div>
+      <div style="background:#fff8f8;border:1px solid #f5c6cb;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#7b1f1f;line-height:1.7;">
+        ⚠️ 以下の取引先は「<strong>原料仕入先・製造委託先</strong>」または「<strong>メールアドレス未登録</strong>」のため、フォロー候補から除外されています。<br>
+        送信ボタンは表示されません（誤送信防止）。
+      </div>
+      <div id="excluded-list-main"></div>
     </div>
   </div>
 
@@ -592,6 +609,7 @@ let senderAccounts = [];
 let attachments = [];
 let templates = [];
 let clientData = [];
+let excludedClientData = []; // 取引区分除外レコード
 let clientChannel = 'all';
 let clientFollowFilter = 'all';
 let clientOriginalMails = {};
@@ -877,11 +895,11 @@ async function sendViaGmail(index) {
   if (btn) { btn.disabled = true; btn.textContent = '下書き作成中...'; }
 
   try {
-    // Gmail API で下書き作成
+    // Gmail API で下書き作成（clientId を渡して除外二重チェック）
     const res = await fetch('/api/create-gmail-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: item.email, subject, htmlBody, senderId }),
+      body: JSON.stringify({ to: item.email, subject, htmlBody, senderId, clientId: item.id }),
     });
     const data = await res.json();
 
@@ -890,6 +908,12 @@ async function sendViaGmail(index) {
       if (confirm(`Gmail API の認証が必要です。認証ページを開きますか？`)) {
         window.open(data.authUrl, '_blank');
       }
+      if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
+      return;
+    }
+    // 除外対象ブロック
+    if (res.status === 403) {
+      alert(`⚠️ ${data.error}`);
       if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
       return;
     }
@@ -1030,6 +1054,15 @@ function setClientFollowFilter(f) {
 }
 
 
+// 送信除外カテゴリ（server.js の EXCLUDED_CATEGORIES と同一・ハードコード）
+const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
+
+function isExcluded(item) {
+  if (EXCLUDED_CATEGORIES.includes(item.transactionCategory)) return true;
+  if (!item.email) return true;
+  return false;
+}
+
 // === 取引先プロパティ抽出 ===
 function extractClientProps(page) {
   const p = page.properties;
@@ -1038,6 +1071,7 @@ function extractClientProps(page) {
     name: p['企業名']?.title?.[0]?.plain_text || '（無題）',
     contact: p['担当者名']?.rich_text?.[0]?.plain_text || '',
     email: p['メールアドレス']?.email || '',
+    transactionCategory: p['取引区分']?.select?.name || '',
     channel: p['ソース']?.select?.name || '',
     stage: p['ステージ']?.select?.name || '',
     orderHistory: (p['取引商品']?.multi_select || []).map(s => s.name).join('、'),
@@ -1277,11 +1311,15 @@ async function sendDirectViaGmail(index) {
     const res = await fetch('/api/create-gmail-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: item.email, subject, htmlBody: htmlEmail, senderId }),
+      body: JSON.stringify({ to: item.email, subject, htmlBody: htmlEmail, senderId, clientId: item.id }),
     });
     const data = await res.json();
     if (data.authUrl) {
       alert('Gmail認証が必要です。このPCで認証してから再試行してください。\n' + data.authUrl);
+      btn.disabled = false; btn.textContent = origText; return;
+    }
+    if (res.status === 403) {
+      alert(`⚠️ ${data.error}`);
       btn.disabled = false; btn.textContent = origText; return;
     }
     if (!data.ok) throw new Error(data.error || '下書き作成失敗');
@@ -1411,10 +1449,66 @@ async function markClientDone(index) {
 }
 
 
+// === 除外一覧 ===
+function showExcludedList() {
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('clientFilters').style.display = 'none';
+  document.getElementById('sent-history-view').style.display = 'none';
+  document.getElementById('excluded-list-view').style.display = 'block';
+  document.getElementById('btn-excluded-list').style.background = '#fff8f8';
+  renderExcludedList();
+}
+
+function hideExcludedList() {
+  document.getElementById('excluded-list-view').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.getElementById('clientFilters').style.display = 'block';
+  document.getElementById('btn-excluded-list').style.background = '';
+}
+
+function renderExcludedList() {
+  const el = document.getElementById('excluded-list-main');
+  const count = document.getElementById('excluded-list-count');
+  count.textContent = `（${excludedClientData.length} 件）`;
+
+  if (excludedClientData.length === 0) {
+    el.innerHTML = '<div class="empty"><h2>除外対象の取引先はありません</h2></div>';
+    return;
+  }
+
+  el.innerHTML = excludedClientData.map(item => {
+    const reason = EXCLUDED_CATEGORIES.includes(item.transactionCategory)
+      ? `取引区分：${item.transactionCategory}`
+      : 'メールアドレス未登録';
+    const catBadge = item.transactionCategory
+      ? `<span class="badge" style="background:#fde8e8;color:#c0392b;">${escapeHtml(item.transactionCategory)}</span>`
+      : '';
+    const stageBadge = item.stage
+      ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.stage}</span>`
+      : '';
+    return `
+      <div class="card" style="border-color:#f5c6cb;opacity:0.85;">
+        <div class="card-header">
+          <span class="card-title" style="color:#888;">${escapeHtml(item.name)}</span>
+          <div class="card-badges">${catBadge}${stageBadge}</div>
+        </div>
+        <div class="card-info">
+          ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
+          ${item.email ? `<span>📧 ${escapeHtml(item.email)}</span>` : '<span style="color:#c0392b;">📧 メールアドレス未登録</span>'}
+          ${item.nextAction ? `<span>📌 ${escapeHtml(item.nextAction)}</span>` : ''}
+        </div>
+        <div style="padding:8px 20px 12px;background:#fff8f8;border-top:1px solid #f5c6cb;">
+          <span style="font-size:12px;color:#c0392b;">🚫 除外理由：${escapeHtml(reason)}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 // === 送信済み一覧 ===
 function showSentHistory() {
   document.getElementById('main').style.display = 'none';
   document.getElementById('clientFilters').style.display = 'none';
+  document.getElementById('excluded-list-view').style.display = 'none';
   document.getElementById('sent-history-view').style.display = 'block';
   document.getElementById('btn-sent-history').style.background = '#e8f5e3';
   initSentHistory();
@@ -1592,10 +1686,28 @@ async function initClients() {
       [...notionSentIds, ...localHiddenIds].filter(id => !_forceShowClients.has(id))
     );
 
-    clientData = pages.map(p => extractClientProps(p)).filter(item => !hiddenIds.has(item.id));
+    const allExtracted = pages.map(p => extractClientProps(p));
+
+    // === DEBUG Phase1 ===
+    console.log('[DEBUG] allExtracted件数:', allExtracted.length);
+    allExtracted.forEach(item => {
+      console.log(`[DEBUG] ${item.name} | transactionCategory: ${JSON.stringify(item.transactionCategory)} | isExcluded: ${isExcluded(item)}`);
+    });
+    // === END DEBUG ===
+
+    excludedClientData = allExtracted.filter(item => isExcluded(item));
+    clientData = allExtracted.filter(item => !isExcluded(item) && !hiddenIds.has(item.id));
 
     document.getElementById('dateInfo').textContent =
       `${formatDate(today())}｜取引先：${clientData.length}件`;
+
+    // 除外件数バッジ更新
+    const excBtn = document.getElementById('btn-excluded-list');
+    if (excBtn) {
+      excBtn.textContent = excludedClientData.length > 0
+        ? `🚫 除外一覧（${excludedClientData.length}）`
+        : '🚫 除外一覧';
+    }
 
     if (clientData.length === 0) {
       main.innerHTML = `

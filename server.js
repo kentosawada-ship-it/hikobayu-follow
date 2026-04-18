@@ -78,7 +78,25 @@ app.get('/oauth2callback', async (req, res) => {
 // Gmail API で下書き作成
 app.post('/api/create-gmail-draft', async (req, res) => {
   try {
-    const { to, subject, htmlBody, senderId } = req.body;
+    const { to, subject, htmlBody, senderId, clientId } = req.body;
+
+    // 除外対象への送信を二重ブロック（clientId が渡された場合のみ）
+    if (clientId) {
+      const pageRes = await fetch(`https://api.notion.com/v1/pages/${clientId}`, {
+        headers: {
+          'Authorization': `Bearer ${NOTION_TOKEN}`,
+          'Notion-Version': '2022-06-28',
+        }
+      });
+      const page = await pageRes.json();
+      const category = page.properties?.['取引区分']?.select?.name || '';
+      if (EXCLUDED_CATEGORIES.includes(category)) {
+        return res.status(403).json({
+          error: `送信不可：取引区分「${category}」は送信対象外です（誤送信防止）`
+        });
+      }
+    }
+
     const senderAccount = SENDER_ACCOUNTS.find(s => s.id === senderId);
     const tokens = loadGmailTokens()[senderId];
     if (!tokens) {
@@ -141,6 +159,9 @@ const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const CLIENTS_DB_ID = '748fc885-8796-49a2-8d91-aa1c131f8b58';
 const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
+
+// 送信除外カテゴリ（ハードコード・UI変更不可）
+const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
 
 // --- 送信アドレス設定 ---
 const SENDER_ACCOUNTS = [
