@@ -737,9 +737,10 @@ let attachments = [];
 let templates = [];
 let clientData = [];
 let excludedClientData = []; // 取引区分除外レコード
+let noEmailClientData = [];  // メールアドレス未登録レコード
 let clientChannel = 'all';
 let clientStage = 'all';
-let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded'
+let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded' | 'no-email'
 let clientOriginalMails = {};
 
 // === Phase3 タブ用ユーティリティ ===
@@ -780,6 +781,9 @@ function getTabData(tab) {
     const manualIds = new Set(getManualExcluded().map(e => e.clientId));
     const manualItems = clientData.filter(item => manualIds.has(item.id));
     return [...excludedClientData, ...manualItems];
+  }
+  if (tab === 'no-email') {
+    return noEmailClientData;
   }
   return [];
 }
@@ -1425,10 +1429,14 @@ function setClientStage(stage) {
 // 送信除外カテゴリ（server.js の EXCLUDED_CATEGORIES と同一・ハードコード）
 const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
 
+// 取引区分が除外対象（原料仕入先・製造委託先）
 function isExcluded(item) {
-  if (EXCLUDED_CATEGORIES.includes(item.transactionCategory)) return true;
-  if (!item.email) return true;
-  return false;
+  return EXCLUDED_CATEGORIES.includes(item.transactionCategory);
+}
+
+// メールアドレス未登録（除外カテゴリは除く）
+function isNoEmail(item) {
+  return !item.email && !isExcluded(item);
 }
 
 // === 取引先プロパティ抽出 ===
@@ -1845,9 +1853,10 @@ async function markClientDone(index) {
 // === Phase3 タブ ===
 function renderWithTabs() {
   const main = document.getElementById('main');
-  const todayCnt   = getTabData('today').length;
-  const newCnt     = getTabData('new-leads').length;
-  const excludeCnt = getTabData('excluded').length;
+  const todayCnt    = getTabData('today').length;
+  const newCnt      = getTabData('new-leads').length;
+  const excludeCnt  = getTabData('excluded').length;
+  const noEmailCnt  = getTabData('no-email').length;
 
   main.innerHTML = `
     <div class="phase3-tab-bar">
@@ -1859,6 +1868,9 @@ function renderWithTabs() {
       </button>
       <button class="phase3-tab-btn ${activeTab==='excluded'?'active':''}" data-tab="excluded" onclick="switchTab('excluded')">
         除外一覧 <span class="tab-badge">${excludeCnt}</span>
+      </button>
+      <button class="phase3-tab-btn ${activeTab==='no-email'?'active':''}" data-tab="no-email" onclick="switchTab('no-email')">
+        メアドなし <span class="tab-badge">${noEmailCnt}</span>
       </button>
     </div>
     <div id="tab-content"></div>
@@ -1880,6 +1892,7 @@ function updateTabCounts() {
     'today':    getTabData('today').length,
     'new-leads':getTabData('new-leads').length,
     'excluded': getTabData('excluded').length,
+    'no-email': getTabData('no-email').length,
   };
   document.querySelectorAll('.phase3-tab-btn').forEach(btn => {
     const badge = btn.querySelector('.tab-badge');
@@ -1898,9 +1911,22 @@ function renderTabContent() {
     } else {
       el.innerHTML = `
         <div style="background:#fff8f8;border:1px solid #f5c6cb;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#7b1f1f;">
-          ⚠️「原料仕入先・製造委託先」またはメールアドレス未登録のため送信除外されています。
+          ⚠️「原料仕入先・製造委託先」のため送信除外されています。
         </div>
         ${data.map(item => renderExcludedCard(item)).join('')}`;
+    }
+    return;
+  }
+
+  if (activeTab === 'no-email') {
+    if (data.length === 0) {
+      el.innerHTML = '<div class="empty"><h2>メールアドレス未登録の取引先はありません</h2></div>';
+    } else {
+      el.innerHTML = `
+        <div style="background:#fffbea;border:1px solid #f0d080;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#7a5f00;">
+          📭 メールアドレスが未登録のためメール送信対象外です。Notionでメアドを登録するか、別の手段（Instagram等）でフォローしてください。
+        </div>
+        ${data.map(item => renderNoEmailCard(item)).join('')}`;
     }
     return;
   }
@@ -1942,9 +1968,7 @@ function renderExcludedCard(item) {
   const isManual = !!manualEntry;
   const reason = isManual
     ? (manualEntry.reason ? `手動除外：${manualEntry.reason}` : '手動除外')
-    : EXCLUDED_CATEGORIES.includes(item.transactionCategory)
-      ? `取引区分：${item.transactionCategory}`
-      : 'メールアドレス未登録';
+    : `取引区分：${item.transactionCategory}`;
   const catBadge = item.transactionCategory
     ? `<span class="badge" style="background:#fde8e8;color:#c0392b;">${escapeHtml(item.transactionCategory)}</span>`
     : '';
@@ -1959,12 +1983,38 @@ function renderExcludedCard(item) {
       </div>
       <div class="card-info">
         ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
-        ${item.email ? `<span>📧 ${escapeHtml(item.email)}</span>` : '<span style="color:#c0392b;">📧 メールアドレス未登録</span>'}
+        ${item.email ? `<span>📧 ${escapeHtml(item.email)}</span>` : ''}
         ${item.nextAction ? `<span>📌 ${escapeHtml(item.nextAction)}</span>` : ''}
       </div>
       <div style="padding:6px 20px 10px;background:#fff8f8;border-top:1px solid #f5c6cb;display:flex;align-items:center;justify-content:space-between;">
         <span style="font-size:12px;color:#c0392b;">🚫 除外理由：${escapeHtml(reason)}</span>
         ${isManual ? `<button onclick="unManualExcludeClient('${item.id}')" style="font-size:12px;padding:3px 10px;background:#fff;border:1px solid #ccc;border-radius:4px;cursor:pointer;color:#333;">除外解除</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderNoEmailCard(item) {
+  const stageBadge = item.stage
+    ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.stage}</span>`
+    : '';
+  const chBadge = item.channel
+    ? `<span class="badge" style="background:#e0f2fe;color:#0369a1;">${item.channel}</span>`
+    : '';
+  return `
+    <div class="card" style="border-color:#f0d080;opacity:0.9;">
+      <div class="card-header">
+        <span class="card-title" style="color:#7a5f00;">${escapeHtml(item.name)}</span>
+        <div class="card-badges">${chBadge}${stageBadge}</div>
+      </div>
+      <div class="card-info">
+        ${item.contact ? `<span>担当：${escapeHtml(item.contact)}様</span>` : ''}
+        <span style="color:#b8860b;">📭 メールアドレス未登録</span>
+        ${item.lastFollowDate ? `<span>📅 前回フォロー日：${item.lastFollowDate}</span>` : ''}
+        ${item.nextAction ? `<span>📌 ${escapeHtml(item.nextAction)}</span>` : ''}
+        ${item.memo ? `<span>📝 ${escapeHtml(item.memo.length > 60 ? item.memo.slice(0,60)+'…' : item.memo)}</span>` : ''}
+      </div>
+      <div style="padding:6px 20px 10px;background:#fffbea;border-top:1px solid #f0d080;font-size:12px;color:#7a5f00;">
+        💡 Notionでメアドを登録するか、別の手段（Instagram等）でフォローしてください
       </div>
     </div>`;
 }
@@ -2194,7 +2244,8 @@ async function initClients() {
 
     const allExtracted = pages.map(p => extractClientProps(p));
     excludedClientData = allExtracted.filter(item => isExcluded(item));
-    clientData = allExtracted.filter(item => !isExcluded(item) && !hiddenIds.has(item.id));
+    noEmailClientData  = allExtracted.filter(item => isNoEmail(item));
+    clientData = allExtracted.filter(item => !isExcluded(item) && !isNoEmail(item) && !hiddenIds.has(item.id));
 
     document.getElementById('dateInfo').textContent =
       `${formatDate(today())}｜取引先：${clientData.length}件`;
