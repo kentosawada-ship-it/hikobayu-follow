@@ -625,6 +625,14 @@
         <button class="filter-btn" data-channel="freee" onclick="setClientChannel('freee')">freee/直接</button>
         <button class="filter-btn" data-channel="goooods" onclick="setClientChannel('goooods')">goooods</button>
       </div>
+      <div class="client-filter-bar">
+        <label>ステージ：</label>
+        <button class="filter-btn active" data-stage="all" onclick="setClientStage('all')">すべて</button>
+        <button class="filter-btn" data-stage="新規リード" onclick="setClientStage('新規リード')">新規リード</button>
+        <button class="filter-btn" data-stage="商談中" onclick="setClientStage('商談中')">商談中</button>
+        <button class="filter-btn" data-stage="取引中" onclick="setClientStage('取引中')">取引中</button>
+        <button class="filter-btn" data-stage="休眠" onclick="setClientStage('休眠')">休眠</button>
+      </div>
       <div class="client-search-wrap">
         <label style="font-size:13px;color:#666;">🔍</label>
         <input
@@ -730,6 +738,7 @@ let templates = [];
 let clientData = [];
 let excludedClientData = []; // 取引区分除外レコード
 let clientChannel = 'all';
+let clientStage = 'all';
 let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded'
 let clientOriginalMails = {};
 
@@ -1398,6 +1407,15 @@ function setClientChannel(ch) {
   clientChannel = ch;
   document.querySelectorAll('[data-channel]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.channel === ch);
+  });
+  initClients();
+}
+
+// === 取引先ステージフィルター ===
+function setClientStage(stage) {
+  clientStage = stage;
+  document.querySelectorAll('[data-stage]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.stage === stage);
   });
   initClients();
 }
@@ -2153,7 +2171,7 @@ async function initClients() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         channel: clientChannel,
-        stage: 'all',
+        stage: clientStage,
       })
     });
     const data = await res.json();
