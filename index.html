@@ -1402,8 +1402,8 @@ function clearClientSearch() {
 function applySearch(data) {
   if (!clientSearchQuery) return data;
   return data.filter(item =>
-    item.name.toLowerCase().includes(clientSearchQuery) ||
-    item.contact.toLowerCase().includes(clientSearchQuery)
+    (item.name || '').toLowerCase().includes(clientSearchQuery) ||
+    (item.contact || '').toLowerCase().includes(clientSearchQuery)
   );
 }
 
