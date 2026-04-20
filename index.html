@@ -453,6 +453,22 @@
       border-color: #2d5a27;
       box-shadow: 0 0 0 2px rgba(45,90,39,0.12);
     }
+    .client-search-input.is-active {
+      background: #f0f7ee;
+      border-color: #2d5a27;
+      font-weight: 500;
+    }
+    .client-search-active-badge {
+      display: none;
+      font-size: 11px;
+      background: #2d5a27;
+      color: #fff;
+      border-radius: 10px;
+      padding: 2px 8px;
+      margin-left: 4px;
+      white-space: nowrap;
+    }
+    .client-search-active-badge.visible { display: inline; }
     .client-search-clear {
       background: none;
       border: none;
@@ -642,6 +658,7 @@
           placeholder="取引先名・担当者名で検索…"
           oninput="onClientSearch(this.value)"
         >
+        <span id="clientSearchBadge" class="client-search-active-badge">検索中</span>
         <button id="clientSearchClear" class="client-search-clear" onclick="clearClientSearch()" title="クリア">✕</button>
       </div>
       <div class="sender-select-wrap">
@@ -1383,8 +1400,10 @@ let clientSearchQuery = '';
 
 function onClientSearch(val) {
   clientSearchQuery = val.trim().toLowerCase();
-  const clearBtn = document.getElementById('clientSearchClear');
-  if (clearBtn) clearBtn.classList.toggle('visible', clientSearchQuery.length > 0);
+  const isActive = clientSearchQuery.length > 0;
+  document.getElementById('clientSearchClear')?.classList.toggle('visible', isActive);
+  document.getElementById('clientSearchBadge')?.classList.toggle('visible', isActive);
+  document.getElementById('clientSearchInput')?.classList.toggle('is-active', isActive);
   updateTabCounts();
   renderTabContent();
 }
@@ -1392,9 +1411,9 @@ function onClientSearch(val) {
 function clearClientSearch() {
   clientSearchQuery = '';
   const input = document.getElementById('clientSearchInput');
-  if (input) input.value = '';
-  const clearBtn = document.getElementById('clientSearchClear');
-  if (clearBtn) clearBtn.classList.remove('visible');
+  if (input) { input.value = ''; input.classList.remove('is-active'); }
+  document.getElementById('clientSearchClear')?.classList.remove('visible');
+  document.getElementById('clientSearchBadge')?.classList.remove('visible');
   updateTabCounts();
   renderTabContent();
 }
@@ -1901,6 +1920,19 @@ function updateTabCounts() {
   });
 }
 
+// 検索中かどうかで 0件メッセージを切り替えるヘルパー
+function emptyHtml(defaultMsg) {
+  if (clientSearchQuery) {
+    return `<div class="empty">
+      <h2>検索条件「${escapeHtml(clientSearchQuery)}」に一致する取引先はありません</h2>
+      <p style="margin-top:14px;">
+        <button onclick="clearClientSearch()" class="btn btn-done" style="font-size:13px;padding:6px 18px;">検索をクリア</button>
+      </p>
+    </div>`;
+  }
+  return `<div class="empty"><h2>${defaultMsg}</h2></div>`;
+}
+
 function renderTabContent() {
   const el = document.getElementById('tab-content');
   if (!el) return;
@@ -1908,7 +1940,7 @@ function renderTabContent() {
 
   if (activeTab === 'excluded') {
     if (data.length === 0) {
-      el.innerHTML = '<div class="empty"><h2>除外対象の取引先はありません</h2></div>';
+      el.innerHTML = emptyHtml('除外対象の取引先はありません');
     } else {
       el.innerHTML = `
         <div style="background:#fff8f8;border:1px solid #f5c6cb;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#7b1f1f;">
@@ -1921,7 +1953,7 @@ function renderTabContent() {
 
   if (activeTab === 'no-email') {
     if (data.length === 0) {
-      el.innerHTML = '<div class="empty"><h2>メールアドレス未登録の取引先はありません</h2></div>';
+      el.innerHTML = emptyHtml('メールアドレス未登録の取引先はありません');
     } else {
       el.innerHTML = `
         <div style="background:#fffbea;border:1px solid #f0d080;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#7a5f00;">
@@ -1933,8 +1965,8 @@ function renderTabContent() {
   }
 
   if (data.length === 0) {
-    const msg = activeTab === 'today' ? '今日のフォロー候補はありません' : '初回アプローチ待ちの取引先はありません';
-    el.innerHTML = `<div class="empty"><h2>${msg}</h2></div>`;
+    const defaultMsg = activeTab === 'today' ? '今日のフォロー候補はありません' : '初回アプローチ待ちの取引先はありません';
+    el.innerHTML = emptyHtml(defaultMsg);
     return;
   }
 
