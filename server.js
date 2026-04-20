@@ -174,11 +174,9 @@ app.post('/api/create-gmail-draft', async (req, res) => {
 
 
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
-const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const CLIENTS_DB_ID = '748fc885-8796-49a2-8d91-aa1c131f8b58';
 const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
-const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 
 // 送信除外カテゴリ（ハードコード・UI変更不可）
 const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
@@ -262,19 +260,6 @@ function loadTemplates() {
 
 function saveTemplates(data) {
   fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(data, null, 2), 'utf8');
-}
-
-// --- メール修正履歴の管理 ---
-const HISTORY_FILE = path.join(__dirname, 'email-history.json');
-
-function loadHistory() {
-  try {
-    return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-  } catch { return []; }
-}
-
-function saveHistory(data) {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
 // --- メール送信後の統合記録（コンタクト履歴 + 取引先マスター更新）---
@@ -601,20 +586,6 @@ app.post('/api/log-email-sent', async (req, res) => {
   }
 });
 
-// --- API: メール修正履歴 ---
-app.get('/api/email-history', (req, res) => {
-  res.json(loadHistory());
-});
-
-app.post('/api/email-history', (req, res) => {
-  const history = loadHistory();
-  history.push({ ...req.body, savedAt: new Date().toISOString() });
-  // 最大50件保持
-  while (history.length > 50) history.shift();
-  saveHistory(history);
-  res.json({ ok: true });
-});
-
 // --- Notion: 今日のフォロー案件を取得 ---
 app.post('/api/notion/query', async (req, res) => {
   try {
@@ -651,117 +622,6 @@ app.post('/api/notion/query', async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('Notion query error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// --- Claude API: メール文を生成 ---
-app.post('/api/claude/generate', async (req, res) => {
-  try {
-    const { caseInfo, senderId } = req.body;
-
-    // 送信者の署名を決定
-    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[0]; // デフォルト佳代
-
-    // ステータスに応じたメール方針
-    const statusGuide = {
-      '見込み段階':   '初回または初期フォロー。まだ深い関係ではないので、押しつけず森の世界観で興味を持ってもらう一歩目のメール。',
-      '提案済み':     '既に提案・サンプル提供済み。感想や検討状況を自然に聞くフォローアップ。次のステップ（注文・打ち合わせ）につながる内容。',
-      '検討中':       '先方が検討中。背中を押しすぎず、追加情報や季節感・タイミングを絡めた柔らかいリマインド。',
-      '反応待ち':     '前回メールや提案への返信がない。圧をかけず、別角度からの話題や新情報で再アプローチ。',
-      '反応なし':     '長期間コンタクトなし。関係をリセットする気持ちで、シンプルに存在を伝える短いメール。',
-    };
-
-    // 業種に応じた提案ポイント
-    const industryGuide = {
-      'ホテル':     'アメニティ・客室備品・ウェルカムギフトとしての提案。宿泊体験の差別化。',
-      'サウナ':     'ロウリュ用アロマ水・サウナ後のスキンケアとしての提案。',
-      '温浴施設':   'ロウリュや湯上がりケアとしての提案。施設のブランディング向上。',
-      'ショップ':   '掛け率50%での仕入れ提案。北海道・ニセコブランドの希少性訴求。',
-      '法人':       'ノベルティ・ギフト・福利厚生としての提案。',
-      '美容室':     'トリートメント後のホームケアアイテムとしての提案。',
-    };
-
-    const statusText = (caseInfo.status || []).join('・') || '不明';
-    const statusInstruction = statusGuide[caseInfo.status?.[0]] || '関係性に合わせた自然なフォローアップメール。';
-    const industryInstruction = industryGuide[caseInfo.industry] || '相手の業態に合わせた提案。';
-
-    // 修正履歴から学習データを構築
-    const history = loadHistory();
-    let learningBlock = '';
-    if (history.length > 0) {
-      // 同じ業種・ステータスの履歴を優先、なければ直近のものを使用
-      const relevant = history
-        .filter(h => h.industry === caseInfo.industry || (h.status || [])[0] === (caseInfo.status || [])[0])
-        .slice(-5);
-      const recent = relevant.length > 0 ? relevant : history.slice(-5);
-
-      if (recent.length > 0) {
-        learningBlock = `\n\n【過去のメール修正パターン（学習データ）】
-以下は過去に生成されたメールとユーザーが実際に送信した修正後の内容です。
-修正の傾向を学び、同様の修正が不要になるようメールを生成してください。\n`;
-        for (const h of recent) {
-          learningBlock += `\n--- 修正例（${h.industry || '不明'}・${(h.status || []).join('/')}）---
-生成文（件名）: ${h.originalSubject}
-修正後（件名）: ${h.editedSubject}
-生成文（本文抜粋）: ${(h.originalBody || '').slice(0, 200)}...
-修正後（本文抜粋）: ${(h.editedBody || '').slice(0, 200)}...\n`;
-        }
-      }
-    }
-
-    const systemPrompt = `あなたはHIKOBAYUというアロマ・スキンケアブランドの営業担当アシスタントです。
-HIKOBAYUのブランドコア：「日常に、森へ還る時間をつくる。呼吸が深まり、余白がひらく。森へと還る、小さな儀式。」
-北海道ニセコのトドマツ精油を使ったスキンケア・アロマ製品を販売しています。
-
-【メール生成ルール】
-- 売り込まない。森の時間に誘う語り口
-- 簡潔・温かみ・具体性のバランスを保つ
-- 署名は「${sender.signature}」で固定
-- 「次のアクション」に書かれた内容を最優先でメールに反映すること
-- 「ミーティングメモ」がある場合はその内容を必ず盛り込む
-${learningBlock}
-出力形式（JSONのみ・前後のテキスト不要）：
-{"subject": "件名", "body": "本文"}`;
-
-    const userContent = `【案件名】${caseInfo.name}
-【担当者】${caseInfo.contact || '担当者'}様
-【業種】${caseInfo.industry || '不明'}
-【現在のステータス】${statusText}
-【次のアクション（最重要）】${caseInfo.nextAction || '特になし'}
-【初回接触メモ】${caseInfo.memo || 'なし'}
-【サンプル送付日】${caseInfo.sampleDate || 'なし'}
-【ミーティングメモ（手動補足）】${caseInfo.extraContext || 'なし'}
-【本日の日付】${caseInfo.today}
-
----
-【ステータス「${statusText}」に応じた方針】
-${statusInstruction}
-
-【業種「${caseInfo.industry}」への提案ポイント】
-${industryInstruction}
-
-上記の情報を踏まえ、このタイミングにぴったりのフォローアップメールを生成してください。`;
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 1200,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userContent }]
-      })
-    });
-
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    console.error('Claude API error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1013,108 +873,7 @@ app.post('/api/notion/append-email/:pageId', async (req, res) => {
   }
 });
 
-// --- 取引先向けメール生成 ---
-app.post('/api/claude/generate-client', async (req, res) => {
-  try {
-    const { clientInfo, senderId } = req.body;
-    const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[0];
 
-    // 宛名をコードで確定させる（AIに任せない）
-    const addressee = (clientInfo.name && clientInfo.contact)
-      ? `${clientInfo.name} ${clientInfo.contact}様`
-      : clientInfo.contact ? `${clientInfo.contact}様` : '';
-
-    const systemPrompt = `あなたはHIKOBAYUというアロマ・スキンケアブランドの営業担当です。
-既存取引先への案内メールを日本語で作成してください。
-
-【取引先情報】
-- 企業名: ${clientInfo.name}
-- 担当者: ${clientInfo.contact || '（不明）'}
-- チャネル: ${clientInfo.channel || '（不明）'}（freee=直接取引 / goooods=goooods経由）
-- 業態: ${clientInfo.business || 'なし'}
-- ステージ: ${clientInfo.stage || 'なし'}
-- 取引商品: ${clientInfo.orderHistory || 'なし'}
-- 前回の対応内容: ${clientInfo.previousAction || 'なし'}
-- メモ: ${clientInfo.memo || 'なし'}
-- 定型文・補足内容: ${clientInfo.extraContext || 'なし'}
-
-【チャネル別の注意点】
-- freee/直接取引の場合: 直接卸価格を案内。「いつもありがとうございます」から始める。
-- goooods経由の場合: goooods上の価格と直接取引価格の両方に触れる。goooods外での直接取引の提案も可。
-
-【トーン】
-- 押しつけがましくない。森・自然・香りのブランドらしい柔らかい文体。
-- 長すぎない（300字以内の本文）。
-- 件名は短く具体的に。
-- 署名は「${sender.signature}」で固定
-
-必ずJSON形式のみで返してください（前後に余計な文字を入れないこと）:
-{"subject": "件名", "body": "本文"}`;
-
-    const userContent = addressee
-      ? `宛名（本文冒頭に必ずこの文字列をそのまま記載すること）: 「${addressee}」\n\n上記の取引先情報をもとに、フォローアップメールを生成してください。本日は${new Date().toISOString().split('T')[0]}です。`
-      : `上記の取引先情報をもとに、フォローアップメールを生成してください。本日は${new Date().toISOString().split('T')[0]}です。`;
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 1200,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userContent }]
-      })
-    });
-
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    console.error('Claude client generate error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// --- 対応内容AI要約（キャッシュ付き）---
-const _summaryCache = new Map(); // hash → summary
-
-function hashText(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) { h = (Math.imul(31, h) + str.charCodeAt(i)) | 0; }
-  return h.toString();
-}
-
-app.post('/api/summarize-contact', async (req, res) => {
-  const { memo } = req.body;
-  if (!memo || memo.trim().length < 10) return res.json({ summary: null });
-
-  const key = hashText(memo);
-  if (_summaryCache.has(key)) return res.json({ summary: _summaryCache.get(key) });
-
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': CLAUDE_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 150,
-        messages: [{
-          role: 'user',
-          content: `以下は取引先への対応メモです。1〜2行で要約し、「次に何を伝えるべきか」が分かる形にしてください。\n\n${memo}`
-        }]
-      })
-    });
-    const data = await response.json();
-    const summary = data.content?.[0]?.text?.trim() || null;
-    if (summary) _summaryCache.set(key, summary);
-    res.json({ summary });
-  } catch (err) {
-    res.json({ summary: null });
-  }
-});
 
 const PORT = process.env.PORT || 3000;
 // --- コンタクト履歴 最新1件取得 ---

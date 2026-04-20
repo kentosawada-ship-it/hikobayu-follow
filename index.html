@@ -758,7 +758,6 @@ let noEmailClientData = [];  // メールアドレス未登録レコード
 let clientChannel = 'all';
 let clientStage = 'all';
 let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded' | 'no-email'
-let clientOriginalMails = {};
 
 // === Phase3 タブ用ユーティリティ ===
 function daysSince(dateStr) {
@@ -847,50 +846,7 @@ function escapeAttr(str) {
   return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// === コンタクト履歴から最新を取得 + AI要約 ===
-async function loadLatestContact(clientId, index) {
-  try {
-    const res = await fetch(`/api/contacts/latest/${clientId}`);
-    const data = await res.json();
-    const el = document.getElementById(`prev-action-${index}`);
-    if (!el) return;
-    if (data && data.memo) {
-      clientData[index].latestContactMemo = data.memo;
-      el.value = data.memo;
-      el.placeholder = '（記録なし）';
-      // AI要約を非同期で取得・表示
-      showAiSummary(index, data.memo, data.fullText || data.memo);
-    } else {
-      el.value = '';
-      el.placeholder = '（記録なし）';
-    }
-  } catch (e) {
-    const el = document.getElementById(`prev-action-${index}`);
-    if (el) { el.value = ''; el.placeholder = '（取得エラー）'; }
-  }
-}
-
-async function showAiSummary(index, memo, fullText) {
-  const summaryEl = document.getElementById(`ai-summary-${index}`);
-  if (!summaryEl) return;
-  summaryEl.textContent = '要約中…';
-  summaryEl.style.display = 'block';
-  try {
-    const res = await fetch('/api/summarize-contact', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memo })
-    });
-    const data = await res.json();
-    if (data.summary) {
-      summaryEl.innerHTML = `<span style="color:#5a7a54;font-weight:600;">💡 AI要約：</span>${escapeHtml(data.summary)}&nbsp;<button onclick="showFullContactText(${index})" style="background:none;border:none;color:#888;font-size:11px;cursor:pointer;text-decoration:underline;padding:0 2px;">全文を見る</button>`;
-    } else {
-      summaryEl.style.display = 'none';
-    }
-  } catch(e) {
-    summaryEl.style.display = 'none';
-  }
-}
+// === コンタクト履歴 関連（loadLatestContactはNotionフィールド直接表示に変更済み）===
 
 function showFullContactText(index) {
   const el = document.getElementById(`prev-action-${index}`);
@@ -1185,94 +1141,8 @@ ${signature}
 </table></td></tr></table></body></html>`;
 }
 
-const _cardHtmlCache = {}; // index → htmlEmail のキャッシュ
-
 // Gmail送信フロー（カード内から直接）
 let _gmailPendingContext = null; // モーダルOK後に使うURL＆index
-
-async function sendViaGmail(index) {
-  const item = clientData[index];
-  const subject = document.getElementById(`client-subject-${index}`)?.value || '';
-  const senderSel = document.getElementById('clientSenderSelect');
-  const senderId = senderSel?.value || 'company';
-  const htmlEmail = _cardHtmlCache[index];
-
-  if (!item.email) { alert('メールアドレスが登録されていません'); return; }
-  if (!subject.trim()) { alert('件名を入力してください'); return; }
-  if (!htmlEmail) { alert('メールを生成してください'); return; }
-
-  // 選択された添付資料をHTMLに埋め込む
-  let htmlBody = htmlEmail;
-  const attachChips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
-  if (attachChips.length > 0) {
-    let attachSection = `<tr><td style="padding:8px 40px 24px;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif;">`;
-    attachSection += `<p style="margin:0 0 8px;font-size:13px;color:#666666;font-weight:bold;">【添付資料】</p>`;
-    attachChips.forEach(chip => {
-      const name = chip.dataset.name;
-      const url = chip.dataset.url;
-      if (url) {
-        attachSection += `<p style="margin:0 0 4px;font-size:13px;"><a href="${url}" style="color:#5a9e4b;">${name}</a></p>`;
-      } else {
-        attachSection += `<p style="margin:0 0 4px;font-size:13px;color:#333;">${name}</p>`;
-      }
-    });
-    attachSection += `</td></tr>`;
-    htmlBody = htmlBody.replace(
-      `<tr><td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;`,
-      attachSection + `<tr><td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;`
-    );
-  }
-
-  // 送信ボタンを無効化
-  const btn = document.querySelector(`#client-actions-${index} .btn-send-html`);
-  if (btn) { btn.disabled = true; btn.textContent = '下書き作成中...'; }
-
-  try {
-    // Gmail API で下書き作成（clientId を渡して除外二重チェック）
-    const res = await fetch('/api/create-gmail-draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: item.email, subject, htmlBody, senderId, clientId: item.id,
-        companyName: item.name || '', contactName: item.contact || '' }),
-    });
-    const data = await res.json();
-
-    // 未認証の場合 → 認証ページへ誘導
-    if (res.status === 401) {
-      if (confirm(`Gmail API の認証が必要です。認証ページを開きますか？`)) {
-        window.open(data.authUrl, '_blank');
-      }
-      if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
-      return;
-    }
-    // 除外対象ブロック
-    if (res.status === 403) {
-      alert(`⚠️ ${data.error}`);
-      if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
-      return;
-    }
-    if (!res.ok) throw new Error(data.error || 'エラー');
-
-    // モーダル表示（Notion記録は confirmOpenGmail で行う）
-    _gmailPendingContext = {
-      draftUrl: data.draftUrl,
-      index,
-      notionPayload: {
-        clientId: item.id,
-        clientName: item.name,
-        subject,
-        bodyHtml: htmlBody,
-        senderEmail: (senderAccounts.find(s => s.id === senderId) || {}).email || '',
-        contactEmail: item.email || '',
-      },
-    };
-    document.getElementById('gmailGuideModal').classList.add('show');
-
-  } catch (err) {
-    alert('エラー: ' + err.message);
-    if (btn) { btn.disabled = false; btn.textContent = '✉ 送信'; }
-  }
-}
 
 function closeGmailModal() {
   document.getElementById('gmailGuideModal').classList.remove('show');
@@ -1478,7 +1348,7 @@ function extractClientProps(page) {
     lastFollowDate: p['前回フォロー日']?.date?.start || '',
     nextFollowDate: p['次回フォロー日']?.date?.start || '',
     nextAction: p['次のアクション']?.rich_text?.[0]?.plain_text || '',
-    latestContactMemo: '', // コンタクト履歴から非同期で埋める
+    previousContent: p['前回の対応内容']?.rich_text?.[0]?.plain_text || '',
     memo: p['メモ']?.rich_text?.[0]?.plain_text || '',
     createdTime: page.created_time || '',
   };
@@ -1542,16 +1412,14 @@ function renderClientCard(item, index) {
         ${memoHtml}
       </div>
       <div class="card-quick-actions">
-        <button class="btn btn-regen" onclick="generateClientMail(${index})" style="padding:6px 14px;font-size:13px;">✉ メール作成</button>
         <button class="btn-skip" onclick="skipClient(${index})">⏭ +7日</button>
         <button class="btn-hold btn-skip" onclick="holdClient(${index})" style="background:#fff7e6;border-color:#f0b429;color:#b45309;">⏸ 保留（1ヶ月）</button>
         <button class="btn-today-exclude" onclick="manualExcludeClient(${index})">✕ 除外</button>
       </div>
       <div class="card-collapsible">
       <div class="context-section" style="padding-bottom:10px;">
-        <label>前回の対応内容（編集可・メール生成に使用）</label>
-        <div id="ai-summary-${index}" style="display:none;font-size:12px;background:#f0f7ee;border:1px solid #c5e0bf;border-radius:6px;padding:6px 10px;margin-bottom:6px;line-height:1.6;color:#444;"></div>
-        <textarea id="prev-action-${index}" class="expandable" style="width:100%;box-sizing:border-box;font-size:13px;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;" placeholder="読み込み中..."></textarea>
+        <label>前回の対応内容（編集可）${item.previousContent && item.previousContent.length > 100 ? ` <button onclick="showFullContactText(${index})" style="background:none;border:none;color:#888;font-size:11px;cursor:pointer;text-decoration:underline;padding:0 2px;">全文を見る</button>` : ''}</label>
+        <textarea id="prev-action-${index}" class="expandable" style="width:100%;box-sizing:border-box;font-size:13px;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;" placeholder="（記録なし）">${escapeHtml(item.previousContent || '')}</textarea>
       </div>
       <div class="context-section" style="padding-bottom:10px;">
         <label>メール本文（定型文を選択 or 自由入力）</label>
@@ -1564,7 +1432,6 @@ function renderClientCard(item, index) {
       </div>
       <div class="mail-section" id="client-mail-${index}">
         <div style="display:flex;gap:8px;">
-          <button class="btn btn-regen" onclick="generateClientMail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x2709; メールを生成する</button>
           <button class="btn btn-gmail" onclick="sendDirectViaGmail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x1f4e8; この内容でGmail下書きを作る</button>
         </div>
       </div>
@@ -1574,153 +1441,7 @@ function renderClientCard(item, index) {
   `;
 }
 
-// === 取引先メール生成 ===
-async function generateClientMail(index) {
-  const item = clientData[index];
-
-  // 添付資料チップの選択状態を保存（生成後も維持）
-  const savedChipIds = Array.from(
-    document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`)
-  ).map(c => c.dataset.id).filter(Boolean);
-
-  const mailEl = document.getElementById(`client-mail-${index}`);
-  mailEl.className = 'mail-section generating';
-  mailEl.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 6px;"></div>メール文を生成中...`;
-  document.getElementById(`client-actions-${index}`).style.display = 'none';
-
-  const senderSel = document.getElementById('clientSenderSelect');
-  const sender = senderAccounts.find(s => s.id === senderSel.value) || senderAccounts[0];
-
-  // 前回の対応内容（テキストエリアの現在の値）
-  const prevActionEl = document.getElementById(`prev-action-${index}`);
-  const previousAction = prevActionEl ? prevActionEl.value : (item.latestContactMemo || '');
-
-  // 定型文テキスト（定型文エリアの現在の値）
-  const templateTextEl = document.getElementById(`template-text-${index}`);
-  const templateContext = templateTextEl ? templateTextEl.value : '';
-
-  // 選択中の添付資料（名称＋URL）
-  const selectedAttachChips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
-  const attachNames = Array.from(selectedAttachChips).map(el => el.dataset.name).filter(Boolean).join('、');
-  const attachLinks = Array.from(selectedAttachChips)
-    .filter(el => el.dataset.url)
-    .map(el => `${el.dataset.name}：${el.dataset.url}`)
-    .join('\n');
-
-  try {
-    const res = await fetch('/api/claude/generate-client', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientInfo: {
-          name: item.name,
-          contact: item.contact,
-          channel: item.channel,
-          orderHistory: item.orderHistory,
-          business: item.business,
-          stage: item.stage,
-          previousAction,
-          memo: item.memo,
-          extraContext: templateContext,
-          attachNames,
-        },
-        senderId: sender.id,
-      })
-    });
-    const data = await res.json();
-
-    // パース：content配列から全textブロックを結合
-    const text = (data.content || [])
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('');
-
-    const jsonMatch = text.match(/\{[\s\S]*?"subject"[\s\S]*?"body"[\s\S]*\}/);
-    if (jsonMatch) {
-      const mail = JSON.parse(jsonMatch[0]);
-
-      // 選択中の添付資料URLセクションをコードで追記（AIに任せない）
-      let finalBody = mail.body;
-      if (attachLinks) {
-        const attachLines = attachLinks.split('\n').filter(Boolean).map(l => `・${l}`).join('\n');
-        const attachSection = `─────\nお送りした資料：\n${attachLines}\n─────`;
-        const sigIdx = finalBody.lastIndexOf('HIKOBAYU');
-        if (sigIdx > 0) {
-          finalBody = finalBody.slice(0, sigIdx) + attachSection + '\n\n' + finalBody.slice(sigIdx);
-        } else {
-          finalBody += '\n\n' + attachSection;
-        }
-      }
-
-      clientOriginalMails[index] = { subject: mail.subject, body: finalBody };
-      renderClientMailSection(index, item, mail.subject, finalBody);
-      // 添付資料チップの選択状態を復元
-      savedChipIds.forEach(id => {
-        const chip = document.querySelector(`#client-attach-panel-${index} .attach-chip[data-id="${id}"]`);
-        if (chip) chip.classList.add('selected');
-      });
-    } else {
-      console.error('Claude APIレスポンス（パース失敗）:', data);
-      throw new Error('メール生成結果のパースに失敗（コンソール確認）');
-    }
-  } catch (err) {
-    mailEl.classList.remove('generating');
-    mailEl.innerHTML = `<div style="color:#c00;padding:8px;">メール生成エラー: ${err.message}</div>`;
-  }
-}
-
-function renderClientMailSection(index, item, subject, body) {
-  // sessionStorage に保存（ブラウザバック対策）
-  try {
-    sessionStorage.setItem('hf_mail_' + item.id, JSON.stringify({ subject, body }));
-  } catch(e) {}
-
-  const mailEl = document.getElementById(`client-mail-${index}`);
-  mailEl.classList.remove('generating');
-
-  // 変数置換
-  const vars = { facility_name: item.name || '', name: item.contact || '' };
-  const subjectSub = (subject || '').replace(/\{\{facility_name\}\}/g, vars.facility_name).replace(/\{\{name\}\}/g, vars.name);
-  const bodySub = (body || '').replace(/\{\{facility_name\}\}/g, vars.facility_name).replace(/\{\{name\}\}/g, vars.name);
-
-  // HTML メールプレビューを構築してキャッシュ
-  const bodyHtml = textToHtml(bodySub);
-  const senderSelForCache = document.getElementById('clientSenderSelect');
-  const senderIdForCache = senderSelForCache?.value || 'company';
-  const htmlEmail = buildHtmlEmailClient(bodyHtml, null, senderIdForCache);
-  _cardHtmlCache[index] = htmlEmail;
-
-  mailEl.innerHTML = `
-    <div class="mail-subject">件名：</div>
-    <input class="mail-subject-input" id="client-subject-${index}" value="${escapeAttr(subjectSub)}">
-    <div style="border:1px solid #e0d8cc;border-radius:8px;overflow:hidden;margin-top:8px;background:#f9f9f7;">
-      <iframe id="client-preview-iframe-${index}" style="width:100%;border:none;height:420px;display:block;"></iframe>
-    </div>
-  `;
-
-  // iframe に HTML をセット
-  const iframe = document.getElementById(`client-preview-iframe-${index}`);
-  iframe.srcdoc = htmlEmail;
-  iframe.onload = () => {
-    try {
-      const h = iframe.contentDocument?.body?.scrollHeight;
-      if (h && h > 100) iframe.style.height = (h + 20) + 'px';
-    } catch(e) {}
-  };
-
-  const actionsEl = document.getElementById(`client-actions-${index}`);
-  actionsEl.style.display = 'flex';
-  actionsEl.innerHTML = `
-    <button class="btn btn-send-html" onclick="sendViaGmail(${index})" style="flex:1;justify-content:center;">
-      &#x2709; 送信（下書き作成）
-    </button>
-    <button class="btn btn-regen" onclick="generateClientMail(${index})" style="padding:8px 12px;">
-      &#x1f504; 再生成
-    </button>
-  `;
-}
-
-// === 定型文でそのまま Gmail 下書き作成（AI生成なし）===
+// === Gmail 下書き作成（正式フロー）===
 async function sendDirectViaGmail(index) {
   const item = clientData[index];
   if (!item.email) { alert('メールアドレスが登録されていません'); return; }
@@ -2009,21 +1730,10 @@ function renderTabContent() {
     return renderClientCard(item, idx);
   }).join('');
 
-  // コンタクト履歴を非同期で各カードに表示
-  data.forEach(item => {
-    const idx = clientData.indexOf(item);
-    loadLatestContact(item.id, idx);
-  });
-
-  // ブラウザバック後の状態復元
+  // ブラウザバック後の送信済み状態を復元
   data.forEach(item => {
     const idx = clientData.indexOf(item);
     try {
-      const saved = sessionStorage.getItem('hf_mail_' + item.id);
-      if (saved) {
-        const { subject, body } = JSON.parse(saved);
-        renderClientMailSection(idx, item, subject, body);
-      }
       const doneBanner = sessionStorage.getItem('hf_done_' + item.id);
       if (doneBanner) applyCardDone(idx, doneBanner);
     } catch(e) {}
