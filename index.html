@@ -1599,9 +1599,13 @@ async function generateClientMail(index) {
   const templateTextEl = document.getElementById(`template-text-${index}`);
   const templateContext = templateTextEl ? templateTextEl.value : '';
 
-  // 選択中の添付資料名
+  // 選択中の添付資料（名称＋URL）
   const selectedAttachChips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
   const attachNames = Array.from(selectedAttachChips).map(el => el.dataset.name).filter(Boolean).join('、');
+  const attachLinks = Array.from(selectedAttachChips)
+    .filter(el => el.dataset.url)
+    .map(el => `${el.dataset.name}：${el.dataset.url}`)
+    .join('\n');
 
   try {
     const res = await fetch('/api/claude/generate-client', {
@@ -1619,6 +1623,7 @@ async function generateClientMail(index) {
           memo: item.memo,
           extraContext: templateContext,
           attachNames,
+          attachLinks,
         },
         senderId: sender.id,
       })
