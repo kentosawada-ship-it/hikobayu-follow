@@ -126,8 +126,8 @@ app.post('/api/create-gmail-draft', async (req, res) => {
     const mimeLines = [
       'Content-Type: text/html; charset=UTF-8',
       'MIME-Version: 1.0',
-      `To: ${to}`,
-      ...(ccAddresses ? [`Cc: ${ccAddresses}`] : []),
+      `To: ${encodeAddressHeader(to)}`,
+      ...(ccAddresses ? [`Cc: ${encodeAddressHeader(ccAddresses)}`] : []),
       `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
       '',
       htmlBody,
@@ -162,6 +162,20 @@ const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
 
 // 送信除外カテゴリ（ハードコード・UI変更不可）
 const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
+
+// RFC 2047 エンコード（非ASCII文字を含む宛先表示名を Base64 エンコード）
+function encodeMailAddress(address) {
+  const match = address.trim().match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
+  if (!match) return address.trim();
+  const name = match[1].trim();
+  const email = match[2].trim();
+  if (!/[^\x00-\x7F]/.test(name)) return `${name} <${email}>`;
+  return `=?UTF-8?B?${Buffer.from(name).toString('base64')}?= <${email}>`;
+}
+
+function encodeAddressHeader(header) {
+  return header.split(',').map(a => encodeMailAddress(a)).join(', ');
+}
 
 // HTMLタグ除去
 function stripHtml(html) {
