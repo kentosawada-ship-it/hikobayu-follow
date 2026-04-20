@@ -877,20 +877,59 @@ function updateTemplateContext(index) {
   if (ta) ta.value = texts.join('\n\n');
 }
 
-// === 添付資料チップクリック（スニペット対応）===
+// === 添付資料チップクリック ===
 function toggleAttachChip(chip, index) {
   chip.classList.toggle('selected');
+
+  const url = chip.dataset.url;
+  const name = chip.dataset.name;
   const ta = document.getElementById(`template-text-${index}`);
+
+  if (url && ta) {
+    const HEADING = '■ お送りした資料';
+    const line = `・${name}: ${url}`;
+    const isSelected = chip.classList.contains('selected');
+
+    if (isSelected) {
+      chip.title = 'クリックで本文から削除';
+      const headingIdx = ta.value.indexOf(HEADING);
+      if (headingIdx === -1) {
+        const base = ta.value.trimEnd();
+        ta.value = (base.length > 0 ? base + '\n\n' : '') + HEADING + '\n' + line;
+      } else {
+        const before = ta.value.slice(0, headingIdx + HEADING.length);
+        const after = ta.value.slice(headingIdx + HEADING.length).trimEnd();
+        ta.value = before + after + '\n' + line;
+      }
+    } else {
+      chip.title = 'クリックで本文末尾に追加';
+      const lines = ta.value.split('\n');
+      const filtered = lines.filter(l => l !== line);
+      const joined = filtered.join('\n');
+      const hIdx = joined.indexOf(HEADING);
+      if (hIdx !== -1) {
+        const afterH = joined.slice(hIdx + HEADING.length);
+        const hasLines = afterH.split('\n').some(l => l.trim().startsWith('・'));
+        if (!hasLines) {
+          ta.value = joined.slice(0, hIdx).trimEnd();
+        } else {
+          ta.value = joined;
+        }
+      } else {
+        ta.value = joined;
+      }
+    }
+    return;
+  }
+
+  // body がある場合（スニペット挿入）
   if (!ta || !chip.dataset.body) return;
-  // 選択中の全 body を template text に反映
   const panel = document.getElementById(`client-attach-panel-${index}`);
   const selectedBodies = Array.from(panel.querySelectorAll('.attach-chip.selected'))
     .map(c => c.dataset.body).filter(Boolean);
-  // 定型文チップで選択中のテキストと結合
   const templateChips = document.querySelectorAll(`#template-panel-${index} .attach-chip.selected`);
   const templateTexts = Array.from(templateChips).map(c => c.dataset.templateText).filter(Boolean);
-  const all = [...templateTexts, ...selectedBodies];
-  ta.value = all.join('\n\n');
+  ta.value = [...templateTexts, ...selectedBodies].join('\n\n');
 }
 
 // === 保留・除外 localStorage ===
@@ -1365,7 +1404,7 @@ function renderClientCard(item, index) {
     ? attachments.map(a => {
         const hasBody = !!(a.body && a.body.trim());
         const label = hasBody ? `📝 ${a.name}` : `📎 ${a.name}`;
-        return `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" data-body="${escapeAttr(a.body || '')}" onclick="toggleAttachChip(this, ${index})" title="${escapeAttr(a.description || a.body?.slice(0,80) || '')}">${label}</span>`;
+        return `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" data-body="${escapeAttr(a.body || '')}" onclick="toggleAttachChip(this, ${index})" title="クリックで本文末尾に追加">${label}</span>`;
       }).join('')
     : '<span class="attach-empty">資料未登録</span>';
 
@@ -1461,9 +1500,7 @@ async function sendDirectViaGmail(index) {
     .replace(/\{\{facility_name\}\}/g, vars.facility_name)
     .replace(/\{\{name\}\}/g, vars.name);
 
-  // 添付資料リンクを本文末尾に付与
-  const attachLinks = getClientSelectedAttachLinks(index);
-  const fullText = templateText + attachLinks;
+  const fullText = templateText;
 
   // 変数置換してHTML化
   const substituted = fullText
@@ -1521,29 +1558,6 @@ async function sendDirectViaGmail(index) {
   }
 }
 
-function getClientSelectedAttachLinks(index) {
-  const chips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
-  if (chips.length === 0) return '';
-  // driveUrl のみ末尾に追加（body はテキストエリアに挿入済み）
-  const lines = [];
-  chips.forEach(chip => {
-    const name = chip.dataset.name;
-    const url = chip.dataset.url;
-    if (url) lines.push(`${name}: ${url}`);
-  });
-  return lines.length > 0 ? '\n\n---\n【添付資料】\n' + lines.join('\n') + '\n' : '';
-}
-
-function buildClientGmailLink(index) {
-  const item = clientData[index];
-  const senderSel = document.getElementById('clientSenderSelect');
-  const from = senderAccounts.find(s => s.id === senderSel.value)?.email || '';
-  const subject = document.getElementById(`client-subject-${index}`).value;
-  const body = document.getElementById(`client-body-${index}`).value + getClientSelectedAttachLinks(index);
-  const params = new URLSearchParams({ to: item.email, su: subject, body });
-  if (from) params.set('from', from);
-  return `https://mail.google.com/mail/?view=cm&${params.toString()}`;
-}
 
 // === 送信済みカードを視覚的に折りたたむ ===
 function applyCardDone(index, bannerText) {
