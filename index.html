@@ -782,8 +782,10 @@ function getTabData(tab) {
   const skipped = getSkippedClients();
   if (tab === 'today') {
     return clientData.filter(item =>
-      !skipped.has(item.id) &&
-      item.nextFollowDate && item.nextFollowDate <= todayStr
+      !skipped.has(item.id) && (
+        _forceShowClients.has(item.id) ||
+        (item.nextFollowDate && item.nextFollowDate <= todayStr)
+      )
     );
   }
   if (tab === 'new-leads') {
@@ -1575,6 +1577,12 @@ function renderClientCard(item, index) {
 // === 取引先メール生成 ===
 async function generateClientMail(index) {
   const item = clientData[index];
+
+  // 添付資料チップの選択状態を保存（生成後も維持）
+  const savedChipIds = Array.from(
+    document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`)
+  ).map(c => c.dataset.id).filter(Boolean);
+
   const mailEl = document.getElementById(`client-mail-${index}`);
   mailEl.className = 'mail-section generating';
   mailEl.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 6px;"></div>メール文を生成中...`;
@@ -1628,6 +1636,11 @@ async function generateClientMail(index) {
       const mail = JSON.parse(jsonMatch[0]);
       clientOriginalMails[index] = { subject: mail.subject, body: mail.body };
       renderClientMailSection(index, item, mail.subject, mail.body);
+      // 添付資料チップの選択状態を復元
+      savedChipIds.forEach(id => {
+        const chip = document.querySelector(`#client-attach-panel-${index} .attach-chip[data-id="${id}"]`);
+        if (chip) chip.classList.add('selected');
+      });
     } else {
       console.error('Claude APIレスポンス（パース失敗）:', data);
       throw new Error('メール生成結果のパースに失敗（コンソール確認）');
@@ -1861,6 +1874,7 @@ async function markClientDone(index) {
 
     const bannerText = `送信済み（次回フォロー：${nextDate}）`;
     applyCardDone(index, bannerText);
+    _forceShowClients.delete(item.id);
     // sessionStorage にも保存してブラウザバック後も維持
     try { sessionStorage.setItem('hf_done_' + item.id, bannerText); } catch(e) {}
 
@@ -2204,6 +2218,7 @@ async function resendToClient(clientId) {
   setHiddenClients(getHiddenClients().filter(h => h.clientId !== clientId));
   // Notionの送信済みフィルタも上書きするよう強制表示セットに追加
   _forceShowClients.add(clientId);
+  activeTab = 'today';
   hideSentHistory();
   clientChannel = 'all';
   clientFollowFilter = 'all';
