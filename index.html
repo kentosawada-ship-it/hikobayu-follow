@@ -730,6 +730,17 @@
     </div>
   </div>
 
+  <!-- テキストエリア拡大モーダル -->
+  <div class="modal-overlay" id="textExpandModal" onclick="if(event.target===this)closeTextExpandModal()">
+    <div class="modal" style="max-width:700px;width:92%;max-height:90vh;display:flex;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 id="textExpandModalTitle" style="margin-bottom:0;"></h2>
+        <button onclick="closeTextExpandModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666;line-height:1;padding:0 4px;">✕</button>
+      </div>
+      <textarea id="textExpandModalTextarea" style="flex:1;width:100%;height:60vh;border:1px solid #e0e8de;border-radius:6px;padding:10px 12px;font-size:13px;font-family:inherit;line-height:1.6;resize:none;background:#f8faf8;"></textarea>
+    </div>
+  </div>
+
   <!-- 定型文テンプレート管理モーダル -->
   <div class="modal-overlay" id="templateModal">
     <div class="modal" style="max-width:600px;">
@@ -845,6 +856,35 @@ function escapeHtml(str) {
 function escapeAttr(str) {
   return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+
+// === テキストエリア拡大モーダル ===
+let _textExpandSourceId = null;
+
+function openTextExpandModal(title, textareaId) {
+  const src = document.getElementById(textareaId);
+  if (!src) return;
+  _textExpandSourceId = textareaId;
+  document.getElementById('textExpandModalTitle').textContent = title;
+  const modal = document.getElementById('textExpandModal');
+  const mta = document.getElementById('textExpandModalTextarea');
+  mta.value = src.value;
+  mta.oninput = () => {
+    const s = document.getElementById(_textExpandSourceId);
+    if (s) s.value = mta.value;
+  };
+  modal.classList.add('show');
+  mta.focus();
+}
+
+function closeTextExpandModal() {
+  document.getElementById('textExpandModal').classList.remove('show');
+  _textExpandSourceId = null;
+}
+
+// ESCキーでテキスト拡大モーダルを閉じる
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeTextExpandModal();
+});
 
 // === コンタクト履歴 関連（loadLatestContactはNotionフィールド直接表示に変更済み）===
 
@@ -1457,11 +1497,11 @@ function renderClientCard(item, index) {
       </div>
       <div class="card-collapsible">
       <div class="context-section" style="padding-bottom:10px;">
-        <label>前回の対応内容（編集可）${item.previousContent && item.previousContent.length > 100 ? ` <button onclick="showFullContactText(${index})" style="background:none;border:none;color:#888;font-size:11px;cursor:pointer;text-decoration:underline;padding:0 2px;">全文を見る</button>` : ''}</label>
+        <label style="display:flex;align-items:center;gap:6px;">前回の対応内容（編集可）${item.previousContent && item.previousContent.length > 100 ? ` <button onclick="showFullContactText(${index})" style="background:none;border:none;color:#888;font-size:11px;cursor:pointer;text-decoration:underline;padding:0 2px;">全文を見る</button>` : ''}<button onclick="openTextExpandModal('前回の対応内容', 'prev-action-${index}')" style="background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;line-height:1;" title="拡大表示">⛶</button></label>
         <textarea id="prev-action-${index}" class="expandable" style="width:100%;box-sizing:border-box;font-size:13px;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;" placeholder="（記録なし）">${escapeHtml(item.previousContent || '')}</textarea>
       </div>
       <div class="context-section" style="padding-bottom:10px;">
-        <label>メール本文（定型文を選択 or 自由入力）</label>
+        <label style="display:flex;align-items:center;gap:6px;">メール本文（定型文を選択 or 自由入力）<button onclick="openTextExpandModal('メール本文', 'template-text-${index}')" style="background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;line-height:1;" title="拡大表示">⛶</button></label>
         <div id="template-panel-${index}" class="attach-list" style="margin-top:4px;">${templateHtml}</div>
         <textarea id="template-text-${index}" class="expandable" style="width:100%;box-sizing:border-box;font-size:12px;background:#fffef8;border:1px solid #e8e4d0;border-radius:6px;padding:6px 10px;min-height:60px;resize:vertical;font-family:inherit;line-height:1.5;margin-top:6px;" placeholder="定型文を選択、または直接入力してください（編集可）"></textarea>
       </div>
