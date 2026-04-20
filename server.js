@@ -1019,6 +1019,11 @@ app.post('/api/claude/generate-client', async (req, res) => {
     const { clientInfo, senderId } = req.body;
     const sender = SENDER_ACCOUNTS.find(s => s.id === senderId) || SENDER_ACCOUNTS[0];
 
+    // 宛名をコードで確定させる（AIに任せない）
+    const addressee = (clientInfo.name && clientInfo.contact)
+      ? `${clientInfo.name} ${clientInfo.contact}様`
+      : clientInfo.contact ? `${clientInfo.contact}様` : '';
+
     const systemPrompt = `あなたはHIKOBAYUというアロマ・スキンケアブランドの営業担当です。
 既存取引先への案内メールを日本語で作成してください。
 
@@ -1032,8 +1037,6 @@ app.post('/api/claude/generate-client', async (req, res) => {
 - 前回の対応内容: ${clientInfo.previousAction || 'なし'}
 - メモ: ${clientInfo.memo || 'なし'}
 - 定型文・補足内容: ${clientInfo.extraContext || 'なし'}
-- 添付予定資料: ${clientInfo.attachNames || 'なし'}
-- 添付資料URL: ${clientInfo.attachLinks || 'なし'}
 
 【チャネル別の注意点】
 - freee/直接取引の場合: 直接卸価格を案内。「いつもありがとうございます」から始める。
@@ -1045,20 +1048,12 @@ app.post('/api/claude/generate-client', async (req, res) => {
 - 件名は短く具体的に。
 - 署名は「${sender.signature}」で固定
 
-【宛名のルール】
-- 宛名は本文の冒頭に「企業名 担当者名様」の形式で書くこと。例：「クロスポイント 児島様」
-- 企業名・担当者名の両方が揃っている場合のみ宛名行を入れる。どちらかが欠けている場合は宛名なしで本文を書く。
-- 担当者名が「名 姓」順で入力されていたら「姓 名」に直す。
-
-【添付資料のルール】
-- 添付資料URLが「なし」以外の場合、文脈に応じて自然な場所にリンクを差し込むこと（「資料名：URL」形式）
-- 差し込む位置はAIが判断してよい（文末、該当トピックの直後など）
-- 必ず全ての指定資料のリンクが本文に含まれること
-- 複数資料がある場合、関連するものは近い位置にまとめてもよい
-- 一律の【ご参考資料】セクションは作らないこと
-
 必ずJSON形式のみで返してください（前後に余計な文字を入れないこと）:
 {"subject": "件名", "body": "本文"}`;
+
+    const userContent = addressee
+      ? `宛名（本文冒頭に必ずこの文字列をそのまま記載すること）: 「${addressee}」\n\n上記の取引先情報をもとに、フォローアップメールを生成してください。本日は${new Date().toISOString().split('T')[0]}です。`
+      : `上記の取引先情報をもとに、フォローアップメールを生成してください。本日は${new Date().toISOString().split('T')[0]}です。`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -1071,7 +1066,7 @@ app.post('/api/claude/generate-client', async (req, res) => {
         model: CLAUDE_MODEL,
         max_tokens: 1200,
         system: systemPrompt,
-        messages: [{ role: 'user', content: `上記の取引先情報をもとに、フォローアップメールを生成してください。本日は${new Date().toISOString().split('T')[0]}です。` }]
+        messages: [{ role: 'user', content: userContent }]
       })
     });
 

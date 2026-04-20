@@ -1623,7 +1623,6 @@ async function generateClientMail(index) {
           memo: item.memo,
           extraContext: templateContext,
           attachNames,
-          attachLinks,
         },
         senderId: sender.id,
       })
@@ -1639,8 +1638,22 @@ async function generateClientMail(index) {
     const jsonMatch = text.match(/\{[\s\S]*?"subject"[\s\S]*?"body"[\s\S]*\}/);
     if (jsonMatch) {
       const mail = JSON.parse(jsonMatch[0]);
-      clientOriginalMails[index] = { subject: mail.subject, body: mail.body };
-      renderClientMailSection(index, item, mail.subject, mail.body);
+
+      // 選択中の添付資料URLセクションをコードで追記（AIに任せない）
+      let finalBody = mail.body;
+      if (attachLinks) {
+        const attachLines = attachLinks.split('\n').filter(Boolean).map(l => `・${l}`).join('\n');
+        const attachSection = `─────\nお送りした資料：\n${attachLines}\n─────`;
+        const sigIdx = finalBody.lastIndexOf('HIKOBAYU');
+        if (sigIdx > 0) {
+          finalBody = finalBody.slice(0, sigIdx) + attachSection + '\n\n' + finalBody.slice(sigIdx);
+        } else {
+          finalBody += '\n\n' + attachSection;
+        }
+      }
+
+      clientOriginalMails[index] = { subject: mail.subject, body: finalBody };
+      renderClientMailSection(index, item, mail.subject, finalBody);
       // 添付資料チップの選択状態を復元
       savedChipIds.forEach(id => {
         const chip = document.querySelector(`#client-attach-panel-${index} .attach-chip[data-id="${id}"]`);
@@ -1957,7 +1970,7 @@ function emptyHtml(defaultMsg) {
 function renderTabContent() {
   const el = document.getElementById('tab-content');
   if (!el) return;
-  const data = applySearch(getTabData(activeTab));
+  const data = clientSearchQuery ? applySearch(clientData) : getTabData(activeTab);
 
   if (activeTab === 'excluded') {
     if (data.length === 0) {
