@@ -447,10 +447,6 @@ const SIGNATURES = {
   `,
 };
 
-// --- アイコン（base64埋め込み・localhost不要・Gmail対応）---
-const ICON_INSTAGRAM = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/instagram_icon_10cd4c36-0d53-4763-87dd-023349ffc59e.svg?v=1775885815';
-const ICON_FACEBOOK  = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/facebook_icon_6c909bfe-8de4-431a-a566-9582bb369ef8.svg?v=1775885815';
-
 // --- HTML メール構築 ---
 function buildHtmlEmail(bodyHtml, imageUrl, senderId) {
   const imageSection = imageUrl
@@ -489,25 +485,7 @@ function buildHtmlEmail(bodyHtml, imageUrl, senderId) {
             </td>
           </tr>
           <tr>
-            <td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;text-align:center;background-color:#f9f7f4;">
-              <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 16px;">
-                <tr>
-                  <td style="padding:0 6px;">
-                    <a href="https://www.instagram.com/hikobayu/?hl=ja">
-                      <img src="${ICON_INSTAGRAM}" width="32" height="32" alt="Instagram" style="display:block;border:0;">
-                    </a>
-                  </td>
-                  <td style="padding:0 6px;">
-                    <a href="https://www.facebook.com/hikobayu/?locale=ja_JP">
-                      <img src="${ICON_FACEBOOK}" width="32" height="32" alt="Facebook" style="display:block;border:0;">
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td align="center" style="font-family:Georgia,serif;font-size:12px;color:#7a7060;line-height:1.8;padding:0 20px 24px;background-color:#f9f7f4;">
+            <td align="center" style="font-family:Georgia,serif;font-size:12px;color:#7a7060;line-height:1.8;padding:24px 20px 24px;border-top:1px solid #f0ede8;background-color:#f9f7f4;">
               ${signature}
             </td>
           </tr>
@@ -1059,6 +1037,44 @@ app.post('/api/claude/generate-client', async (req, res) => {
   } catch (err) {
     console.error('Claude client generate error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 対応内容AI要約（キャッシュ付き）---
+const _summaryCache = new Map(); // hash → summary
+
+function hashText(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = (Math.imul(31, h) + str.charCodeAt(i)) | 0; }
+  return h.toString();
+}
+
+app.post('/api/summarize-contact', async (req, res) => {
+  const { memo } = req.body;
+  if (!memo || memo.trim().length < 10) return res.json({ summary: null });
+
+  const key = hashText(memo);
+  if (_summaryCache.has(key)) return res.json({ summary: _summaryCache.get(key) });
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': CLAUDE_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 150,
+        messages: [{
+          role: 'user',
+          content: `以下は取引先への対応メモです。1〜2行で要約し、「次に何を伝えるべきか」が分かる形にしてください。\n\n${memo}`
+        }]
+      })
+    });
+    const data = await response.json();
+    const summary = data.content?.[0]?.text?.trim() || null;
+    if (summary) _summaryCache.set(key, summary);
+    res.json({ summary });
+  } catch (err) {
+    res.json({ summary: null });
   }
 });
 

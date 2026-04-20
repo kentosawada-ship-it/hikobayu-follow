@@ -431,6 +431,48 @@
       align-items: center;
     }
 
+    /* 検索ボックス */
+    .client-search-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .client-search-input {
+      border: 1px solid #ccc;
+      border-radius: 16px;
+      padding: 5px 14px;
+      font-size: 13px;
+      color: #333;
+      background: #fff;
+      width: 200px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .client-search-input:focus {
+      border-color: #2d5a27;
+      box-shadow: 0 0 0 2px rgba(45,90,39,0.12);
+    }
+    .client-search-clear {
+      background: none;
+      border: none;
+      font-size: 16px;
+      color: #aaa;
+      cursor: pointer;
+      padding: 0 2px;
+      line-height: 1;
+      display: none;
+    }
+    .client-search-clear.visible { display: inline; }
+
+    /* テキストエリア フォーカス時拡張 */
+    textarea.expandable {
+      transition: min-height 0.2s ease;
+    }
+    textarea.expandable:focus {
+      min-height: 120px !important;
+    }
+
     /* フォロー種別セレクト */
     .follow-type-select {
       border: 1px solid #ccc;
@@ -583,6 +625,17 @@
         <button class="filter-btn" data-channel="freee" onclick="setClientChannel('freee')">freee/直接</button>
         <button class="filter-btn" data-channel="goooods" onclick="setClientChannel('goooods')">goooods</button>
       </div>
+      <div class="client-search-wrap">
+        <label style="font-size:13px;color:#666;">🔍</label>
+        <input
+          type="text"
+          id="clientSearchInput"
+          class="client-search-input"
+          placeholder="取引先名・担当者名で検索…"
+          oninput="onClientSearch(this.value)"
+        >
+        <button id="clientSearchClear" class="client-search-clear" onclick="clearClientSearch()" title="クリア">✕</button>
+      </div>
       <div class="sender-select-wrap">
         <label>送信元：</label>
         <select class="sender-select" id="clientSenderSelect"></select>
@@ -611,16 +664,27 @@
 
 <!-- 添付資料設定モーダル -->
   <div class="modal-overlay" id="attachModal">
-    <div class="modal">
-      <h2>&#x1f4ce; よく使う添付資料</h2>
+    <div class="modal" style="max-width:620px;">
+      <h2>&#x1f4ce; 資料・スニペット管理</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px;">本文を登録するとワンクリックでメール本文に挿入できます。Google Driveリンクも併用可。</p>
       <div id="attachModalList"></div>
       <div class="modal-add">
-        <input id="newAttachName" placeholder="資料名（例：営業資料）">
-        <input id="newAttachUrl" placeholder="Google Drive 共有リンク">
+        <input id="newAttachName" placeholder="資料名（例：卸会員申請の案内）">
+        <textarea id="newAttachBody" placeholder="本文・スニペット（任意）：メール本文に挿入したいテキストを入力" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 8px;font-size:13px;min-height:70px;resize:vertical;font-family:inherit;margin-bottom:4px;box-sizing:border-box;"></textarea>
+        <input id="newAttachUrl" placeholder="Google Drive 共有リンク（任意）">
         <input id="newAttachDesc" placeholder="説明（任意）">
         <button onclick="addAttachment()">追加</button>
       </div>
       <button class="modal-close" onclick="closeAttachSettings()">閉じる</button>
+    </div>
+  </div>
+
+  <!-- 全文表示モーダル -->
+  <div class="modal-overlay" id="fullTextModal" onclick="if(event.target===this)document.getElementById('fullTextModal').classList.remove('show')">
+    <div class="modal" style="max-width:560px;">
+      <h2 style="margin-bottom:12px;">📄 対応内容 全文</h2>
+      <pre id="fullTextModalContent" style="white-space:pre-wrap;font-size:13px;color:#333;line-height:1.7;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:12px 14px;max-height:400px;overflow-y:auto;font-family:inherit;"></pre>
+      <button class="modal-close" onclick="document.getElementById('fullTextModal').classList.remove('show')">閉じる</button>
     </div>
   </div>
 
@@ -704,7 +768,9 @@ function getTabData(tab) {
     );
   }
   if (tab === 'excluded') {
-    return excludedClientData;
+    const manualIds = new Set(getManualExcluded().map(e => e.clientId));
+    const manualItems = clientData.filter(item => manualIds.has(item.id));
+    return [...excludedClientData, ...manualItems];
   }
   return [];
 }
@@ -748,7 +814,7 @@ function escapeAttr(str) {
   return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// === コンタクト履歴から最新を取得 ===
+// === コンタクト履歴から最新を取得 + AI要約 ===
 async function loadLatestContact(clientId, index) {
   try {
     const res = await fetch(`/api/contacts/latest/${clientId}`);
@@ -759,6 +825,8 @@ async function loadLatestContact(clientId, index) {
       clientData[index].latestContactMemo = data.memo;
       el.value = data.memo;
       el.placeholder = '（記録なし）';
+      // AI要約を非同期で取得・表示
+      showAiSummary(index, data.memo, data.fullText || data.memo);
     } else {
       el.value = '';
       el.placeholder = '（記録なし）';
@@ -766,6 +834,39 @@ async function loadLatestContact(clientId, index) {
   } catch (e) {
     const el = document.getElementById(`prev-action-${index}`);
     if (el) { el.value = ''; el.placeholder = '（取得エラー）'; }
+  }
+}
+
+async function showAiSummary(index, memo, fullText) {
+  const summaryEl = document.getElementById(`ai-summary-${index}`);
+  if (!summaryEl) return;
+  summaryEl.textContent = '要約中…';
+  summaryEl.style.display = 'block';
+  try {
+    const res = await fetch('/api/summarize-contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo })
+    });
+    const data = await res.json();
+    if (data.summary) {
+      summaryEl.innerHTML = `<span style="color:#5a7a54;font-weight:600;">💡 AI要約：</span>${escapeHtml(data.summary)}&nbsp;<button onclick="showFullContactText(${index})" style="background:none;border:none;color:#888;font-size:11px;cursor:pointer;text-decoration:underline;padding:0 2px;">全文を見る</button>`;
+    } else {
+      summaryEl.style.display = 'none';
+    }
+  } catch(e) {
+    summaryEl.style.display = 'none';
+  }
+}
+
+function showFullContactText(index) {
+  const el = document.getElementById(`prev-action-${index}`);
+  const text = el ? el.value : '（データなし）';
+  const modal = document.getElementById('fullTextModal');
+  const content = document.getElementById('fullTextModalContent');
+  if (modal && content) {
+    content.textContent = text;
+    modal.classList.add('show');
   }
 }
 
@@ -787,6 +888,85 @@ function updateTemplateContext(index) {
   if (ta) ta.value = texts.join('\n\n');
 }
 
+// === 添付資料チップクリック（スニペット対応）===
+function toggleAttachChip(chip, index) {
+  chip.classList.toggle('selected');
+  const ta = document.getElementById(`template-text-${index}`);
+  if (!ta || !chip.dataset.body) return;
+  // 選択中の全 body を template text に反映
+  const panel = document.getElementById(`client-attach-panel-${index}`);
+  const selectedBodies = Array.from(panel.querySelectorAll('.attach-chip.selected'))
+    .map(c => c.dataset.body).filter(Boolean);
+  // 定型文チップで選択中のテキストと結合
+  const templateChips = document.querySelectorAll(`#template-panel-${index} .attach-chip.selected`);
+  const templateTexts = Array.from(templateChips).map(c => c.dataset.templateText).filter(Boolean);
+  const all = [...templateTexts, ...selectedBodies];
+  ta.value = all.join('\n\n');
+}
+
+// === 保留・除外 localStorage ===
+const LS_MANUAL_EXCLUDED_KEY = 'hf_manual_excluded';
+function getManualExcluded() {
+  try { return JSON.parse(localStorage.getItem(LS_MANUAL_EXCLUDED_KEY) || '[]'); } catch { return []; }
+}
+function setManualExcluded(list) {
+  localStorage.setItem(LS_MANUAL_EXCLUDED_KEY, JSON.stringify(list));
+}
+function isManualExcluded(clientId) {
+  return getManualExcluded().some(e => e.clientId === clientId);
+}
+
+async function holdClient(index) {
+  const item = clientData[index];
+  if (!item) return;
+  const nextDate = addDays(today(), 30);
+  const btn = document.querySelector(`#client-card-${index} .btn-hold`);
+  if (btn) { btn.disabled = true; btn.textContent = '更新中...'; }
+  try {
+    const res = await fetch(`/api/clients/update/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nextFollowDate: nextDate }),
+    });
+    if (!res.ok) throw new Error('更新失敗');
+    item.nextFollowDate = nextDate;
+    addToSessionSkip(item.id);
+    const card = document.getElementById(`client-card-${index}`);
+    if (card) {
+      card.style.transition = 'opacity 0.3s';
+      card.style.opacity = '0';
+      setTimeout(() => { card.style.display = 'none'; updateTabCounts(); }, 300);
+    }
+  } catch(err) {
+    alert('保留処理エラー: ' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = '⏸ 保留（1ヶ月）'; }
+  }
+}
+
+function manualExcludeClient(index) {
+  const item = clientData[index];
+  if (!item) return;
+  const reason = prompt(`「${item.name}」を除外します。\n理由を入力してください（任意）：`) ?? null;
+  if (reason === null) return; // キャンセル
+  const list = getManualExcluded();
+  if (!list.some(e => e.clientId === item.id)) {
+    list.push({ clientId: item.id, name: item.name, reason, excludedAt: new Date().toISOString() });
+    setManualExcluded(list);
+  }
+  addToSessionSkip(item.id);
+  const card = document.getElementById(`client-card-${index}`);
+  if (card) {
+    card.style.transition = 'opacity 0.3s';
+    card.style.opacity = '0';
+    setTimeout(() => { card.style.display = 'none'; updateTabCounts(); }, 300);
+  }
+}
+
+function unManualExcludeClient(clientId) {
+  setManualExcluded(getManualExcluded().filter(e => e.clientId !== clientId));
+  initClients();
+}
+
 // === 添付資料設定モーダル ===
 function openAttachSettings() {
   renderAttachModal();
@@ -805,21 +985,54 @@ function renderAttachModal() {
     return;
   }
   list.innerHTML = attachments.map(a => `
-    <div class="modal-item">
-      <div class="modal-item-info">
-        <div class="name">${escapeHtml(a.name)}</div>
-        ${a.description ? `<div class="desc">${escapeHtml(a.description)}</div>` : ''}
-        ${a.driveUrl ? `<div class="url">${escapeHtml(a.driveUrl)}</div>` : '<div class="desc" style="color:#c00;">リンク未設定</div>'}
+    <div class="modal-item" style="flex-direction:column;align-items:stretch;gap:6px;" id="attach-item-${a.id}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div class="modal-item-info" style="flex:1;">
+          <div class="name">${escapeHtml(a.name)}</div>
+          ${a.description ? `<div class="desc">${escapeHtml(a.description)}</div>` : ''}
+          ${a.driveUrl ? `<div class="url" style="font-size:11px;word-break:break-all;">${escapeHtml(a.driveUrl)}</div>` : ''}
+        </div>
+        <div class="modal-item-actions" style="flex-shrink:0;margin-left:8px;">
+          <button onclick="toggleAttachEdit('${a.id}')" style="font-size:12px;padding:3px 8px;">編集</button>
+          <button class="del" onclick="deleteAttachment('${a.id}')">削除</button>
+        </div>
       </div>
-      <div class="modal-item-actions">
-        <button class="del" onclick="deleteAttachment('${a.id}')">削除</button>
+      ${a.body ? `<div style="font-size:12px;background:#f9f8f4;border:1px solid #e8e4d0;border-radius:4px;padding:6px 8px;white-space:pre-wrap;max-height:80px;overflow-y:auto;color:#555;">${escapeHtml(a.body)}</div>` : ''}
+      <div id="attach-edit-${a.id}" style="display:none;background:#f5f5f2;border-radius:6px;padding:8px;gap:6px;flex-direction:column;">
+        <input id="edit-name-${a.id}" value="${escapeAttr(a.name)}" placeholder="資料名" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;box-sizing:border-box;">
+        <textarea id="edit-body-${a.id}" placeholder="本文・スニペット（任意）" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;min-height:60px;resize:vertical;font-family:inherit;box-sizing:border-box;">${escapeHtml(a.body || '')}</textarea>
+        <input id="edit-url-${a.id}" value="${escapeAttr(a.driveUrl || '')}" placeholder="Google Drive リンク（任意）" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;box-sizing:border-box;">
+        <input id="edit-desc-${a.id}" value="${escapeAttr(a.description || '')}" placeholder="説明（任意）" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;box-sizing:border-box;">
+        <button onclick="saveAttachEdit('${a.id}')" style="background:#2d5a27;color:#fff;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;font-size:13px;">保存</button>
       </div>
     </div>
   `).join('');
 }
 
+function toggleAttachEdit(id) {
+  const el = document.getElementById(`attach-edit-${id}`);
+  if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+}
+
+async function saveAttachEdit(id) {
+  const name = document.getElementById(`edit-name-${id}`)?.value.trim();
+  const body = document.getElementById(`edit-body-${id}`)?.value.trim();
+  const driveUrl = document.getElementById(`edit-url-${id}`)?.value.trim();
+  const description = document.getElementById(`edit-desc-${id}`)?.value.trim();
+  if (!name) return alert('資料名を入力してください');
+  await fetch(`/api/attachments/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, body, driveUrl, description })
+  });
+  const idx = attachments.findIndex(a => a.id === id);
+  if (idx !== -1) attachments[idx] = { ...attachments[idx], name, body, driveUrl, description };
+  renderAttachModal();
+}
+
 async function addAttachment() {
   const name = document.getElementById('newAttachName').value.trim();
+  const body = document.getElementById('newAttachBody').value.trim();
   const driveUrl = document.getElementById('newAttachUrl').value.trim();
   const description = document.getElementById('newAttachDesc').value.trim();
   if (!name) return alert('資料名を入力してください');
@@ -827,12 +1040,13 @@ async function addAttachment() {
   const res = await fetch('/api/attachments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, driveUrl, description })
+    body: JSON.stringify({ name, body, driveUrl, description })
   });
   const item = await res.json();
   attachments.push(item);
   renderAttachModal();
   document.getElementById('newAttachName').value = '';
+  document.getElementById('newAttachBody').value = '';
   document.getElementById('newAttachUrl').value = '';
   document.getElementById('newAttachDesc').value = '';
 }
@@ -904,9 +1118,6 @@ async function deleteTemplate(id) {
 
 
 // クライアント側 HTML メール構築（server.js の buildHtmlEmail と同一ロジック）
-const CLIENT_ICON_INSTAGRAM = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/instagram_icon_10cd4c36-0d53-4763-87dd-023349ffc59e.svg?v=1775885815';
-const CLIENT_ICON_FACEBOOK  = 'https://cdn.shopify.com/s/files/1/0608/7904/4846/files/facebook_icon_6c909bfe-8de4-431a-a566-9582bb369ef8.svg?v=1775885815';
-
 const CLIENT_SIGNATURES = {
   company: `合同会社HIKOBAYU<br>62-3 Motomachi, Niseko, Hokkaido<br><span style="color:#c8bfb0">─────────────────</span><br>info@hikobayu.com<br>hikobayu.com`,
   kayo:    `澤田 佳代子 &nbsp; Kayoko Sawada<br>合同会社HIKOBAYU &nbsp; 代表<br><span style="color:#c8bfb0">─────────────────</span><br>62-3 Motomachi, Niseko, Hokkaido<br>someco@hikobayu.com<br>hikobayu.com`,
@@ -935,13 +1146,7 @@ function buildHtmlEmailClient(bodyHtml, imageUrl, senderId) {
 <tr><td style="padding:32px 40px;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',Helvetica,Arial,sans-serif;font-size:15px;color:#333333;line-height:1.8;">
 ${styledBody}${imageSection}
 </td></tr>
-<tr><td style="padding:24px 40px 8px;border-top:1px solid #f0ede8;text-align:center;background-color:#f9f7f4;">
-<table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 16px;"><tr>
-<td style="padding:0 6px;"><a href="https://www.instagram.com/hikobayu/?hl=ja"><img src="${CLIENT_ICON_INSTAGRAM}" width="32" height="32" alt="Instagram" style="display:block;border:0;"></a></td>
-<td style="padding:0 6px;"><a href="https://www.facebook.com/hikobayu/?locale=ja_JP"><img src="${CLIENT_ICON_FACEBOOK}" width="32" height="32" alt="Facebook" style="display:block;border:0;"></a></td>
-</tr></table>
-</td></tr>
-<tr><td align="center" style="font-family:Georgia,serif;font-size:12px;color:#7a7060;line-height:1.8;padding:0 20px 24px;background-color:#f9f7f4;">
+<tr><td align="center" style="font-family:Georgia,serif;font-size:12px;color:#7a7060;line-height:1.8;padding:24px 20px 24px;border-top:1px solid #f0ede8;background-color:#f9f7f4;">
 ${signature}
 </td></tr>
 </table></td></tr></table></body></html>`;
@@ -1159,6 +1364,35 @@ function textToHtml(text) {
 }
 
 
+// === 取引先検索 ===
+let clientSearchQuery = '';
+
+function onClientSearch(val) {
+  clientSearchQuery = val.trim().toLowerCase();
+  const clearBtn = document.getElementById('clientSearchClear');
+  if (clearBtn) clearBtn.classList.toggle('visible', clientSearchQuery.length > 0);
+  updateTabCounts();
+  renderTabContent();
+}
+
+function clearClientSearch() {
+  clientSearchQuery = '';
+  const input = document.getElementById('clientSearchInput');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('clientSearchClear');
+  if (clearBtn) clearBtn.classList.remove('visible');
+  updateTabCounts();
+  renderTabContent();
+}
+
+function applySearch(data) {
+  if (!clientSearchQuery) return data;
+  return data.filter(item =>
+    item.name.toLowerCase().includes(clientSearchQuery) ||
+    item.contact.toLowerCase().includes(clientSearchQuery)
+  );
+}
+
 // === 取引先チャネルフィルター ===
 function setClientChannel(ch) {
   clientChannel = ch;
@@ -1207,11 +1441,13 @@ function renderClientCard(item, index) {
   const stageBadge = item.stage ? `<span class="badge" style="background:#dbeafe;color:#2563eb;">${item.stage}</span>` : '';
   const bizBadge = item.business ? `<span class="badge badge-industry">${item.business}</span>` : '';
 
-  // 添付資料チップ
+  // 添付資料チップ（body があればスニペット挿入も行う）
   let attachHtml = attachments.length > 0
-    ? attachments.map(a =>
-        `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" onclick="this.classList.toggle('selected')" title="${escapeAttr(a.description || '')}">${a.name}</span>`
-      ).join('')
+    ? attachments.map(a => {
+        const hasBody = !!(a.body && a.body.trim());
+        const label = hasBody ? `📝 ${a.name}` : `📎 ${a.name}`;
+        return `<span class="attach-chip" data-id="${a.id}" data-name="${escapeAttr(a.name)}" data-url="${escapeAttr(a.driveUrl || '')}" data-body="${escapeAttr(a.body || '')}" onclick="toggleAttachChip(this, ${index})" title="${escapeAttr(a.description || a.body?.slice(0,80) || '')}">${label}</span>`;
+      }).join('')
     : '<span class="attach-empty">資料未登録</span>';
 
   // 定型文チップ（独立枠・複数選択可）
@@ -1258,18 +1494,20 @@ function renderClientCard(item, index) {
       </div>
       <div class="card-quick-actions">
         <button class="btn btn-regen" onclick="generateClientMail(${index})" style="padding:6px 14px;font-size:13px;">✉ メール作成</button>
-        <button class="btn-skip" onclick="skipClient(${index})">⏭ スキップ（次回+7日）</button>
-        <button class="btn-today-exclude" onclick="excludeClient(${index})">✕ 今日はスキップ</button>
+        <button class="btn-skip" onclick="skipClient(${index})">⏭ +7日</button>
+        <button class="btn-hold btn-skip" onclick="holdClient(${index})" style="background:#fff7e6;border-color:#f0b429;color:#b45309;">⏸ 保留（1ヶ月）</button>
+        <button class="btn-today-exclude" onclick="manualExcludeClient(${index})">✕ 除外</button>
       </div>
       <div class="card-collapsible">
       <div class="context-section" style="padding-bottom:10px;">
         <label>前回の対応内容（編集可・メール生成に使用）</label>
-        <textarea id="prev-action-${index}" style="width:100%;box-sizing:border-box;font-size:13px;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;" placeholder="読み込み中..."></textarea>
+        <div id="ai-summary-${index}" style="display:none;font-size:12px;background:#f0f7ee;border:1px solid #c5e0bf;border-radius:6px;padding:6px 10px;margin-bottom:6px;line-height:1.6;color:#444;"></div>
+        <textarea id="prev-action-${index}" class="expandable" style="width:100%;box-sizing:border-box;font-size:13px;background:#f8faf8;border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;" placeholder="読み込み中..."></textarea>
       </div>
       <div class="context-section" style="padding-bottom:10px;">
-        <label>定型文（クリックで選択・複数可）</label>
+        <label>メール本文（定型文を選択 or 自由入力）</label>
         <div id="template-panel-${index}" class="attach-list" style="margin-top:4px;">${templateHtml}</div>
-        <textarea id="template-text-${index}" style="width:100%;box-sizing:border-box;font-size:12px;background:#fffef8;border:1px solid #e8e4d0;border-radius:6px;padding:6px 10px;min-height:60px;resize:vertical;font-family:inherit;line-height:1.5;margin-top:6px;" placeholder="選択した定型文の内容がここに表示されます（編集可）"></textarea>
+        <textarea id="template-text-${index}" class="expandable" style="width:100%;box-sizing:border-box;font-size:12px;background:#fffef8;border:1px solid #e8e4d0;border-radius:6px;padding:6px 10px;min-height:60px;resize:vertical;font-family:inherit;line-height:1.5;margin-top:6px;" placeholder="定型文を選択、または直接入力してください（編集可）"></textarea>
       </div>
       <div class="attach-section" id="client-attach-panel-${index}">
         <label>&#x1f4ce; 添付資料（クリックで選択）</label>
@@ -1278,7 +1516,7 @@ function renderClientCard(item, index) {
       <div class="mail-section" id="client-mail-${index}">
         <div style="display:flex;gap:8px;">
           <button class="btn btn-regen" onclick="generateClientMail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x2709; メールを生成する</button>
-          <button class="btn btn-gmail" onclick="sendDirectViaGmail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x1f4e8; 定型文でそのまま送る</button>
+          <button class="btn btn-gmail" onclick="sendDirectViaGmail(${index})" style="flex:1;padding:12px;font-size:15px;">&#x1f4e8; この内容でGmail下書きを作る</button>
         </div>
       </div>
       <div class="card-actions" id="client-actions-${index}" style="display:none;"></div>
@@ -1415,7 +1653,7 @@ async function sendDirectViaGmail(index) {
   // 定型文テキストを取得
   const templateTextEl = document.getElementById(`template-text-${index}`);
   const templateText = templateTextEl?.value?.trim() || '';
-  if (!templateText) { alert('定型文を選択してください'); return; }
+  if (!templateText) { alert('メール本文を入力または定型文を選択してください'); return; }
 
   // 件名：定型文の1行目、または施設名を使ったデフォルト
   const firstLine = templateText.split('\n')[0].replace(/^#+\s*/, '').trim();
@@ -1486,13 +1724,14 @@ async function sendDirectViaGmail(index) {
 function getClientSelectedAttachLinks(index) {
   const chips = document.querySelectorAll(`#client-attach-panel-${index} .attach-chip.selected`);
   if (chips.length === 0) return '';
-  let links = '\n\n---\n【添付資料】\n';
+  // driveUrl のみ末尾に追加（body はテキストエリアに挿入済み）
+  const lines = [];
   chips.forEach(chip => {
     const name = chip.dataset.name;
     const url = chip.dataset.url;
-    if (url) links += `${name}: ${url}\n`;
+    if (url) lines.push(`${name}: ${url}`);
   });
-  return links;
+  return lines.length > 0 ? '\n\n---\n【添付資料】\n' + lines.join('\n') + '\n' : '';
 }
 
 function buildClientGmailLink(index) {
@@ -1633,7 +1872,7 @@ function updateTabCounts() {
 function renderTabContent() {
   const el = document.getElementById('tab-content');
   if (!el) return;
-  const data = getTabData(activeTab);
+  const data = applySearch(getTabData(activeTab));
 
   if (activeTab === 'excluded') {
     if (data.length === 0) {
@@ -1681,9 +1920,13 @@ function renderTabContent() {
 }
 
 function renderExcludedCard(item) {
-  const reason = EXCLUDED_CATEGORIES.includes(item.transactionCategory)
-    ? `取引区分：${item.transactionCategory}`
-    : 'メールアドレス未登録';
+  const manualEntry = getManualExcluded().find(e => e.clientId === item.id);
+  const isManual = !!manualEntry;
+  const reason = isManual
+    ? (manualEntry.reason ? `手動除外：${manualEntry.reason}` : '手動除外')
+    : EXCLUDED_CATEGORIES.includes(item.transactionCategory)
+      ? `取引区分：${item.transactionCategory}`
+      : 'メールアドレス未登録';
   const catBadge = item.transactionCategory
     ? `<span class="badge" style="background:#fde8e8;color:#c0392b;">${escapeHtml(item.transactionCategory)}</span>`
     : '';
@@ -1701,8 +1944,9 @@ function renderExcludedCard(item) {
         ${item.email ? `<span>📧 ${escapeHtml(item.email)}</span>` : '<span style="color:#c0392b;">📧 メールアドレス未登録</span>'}
         ${item.nextAction ? `<span>📌 ${escapeHtml(item.nextAction)}</span>` : ''}
       </div>
-      <div style="padding:6px 20px 10px;background:#fff8f8;border-top:1px solid #f5c6cb;">
+      <div style="padding:6px 20px 10px;background:#fff8f8;border-top:1px solid #f5c6cb;display:flex;align-items:center;justify-content:space-between;">
         <span style="font-size:12px;color:#c0392b;">🚫 除外理由：${escapeHtml(reason)}</span>
+        ${isManual ? `<button onclick="unManualExcludeClient('${item.id}')" style="font-size:12px;padding:3px 10px;background:#fff;border:1px solid #ccc;border-radius:4px;cursor:pointer;color:#333;">除外解除</button>` : ''}
       </div>
     </div>`;
 }
