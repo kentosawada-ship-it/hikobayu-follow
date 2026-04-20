@@ -1230,7 +1230,8 @@ async function sendViaGmail(index) {
     const res = await fetch('/api/create-gmail-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: item.email, subject, htmlBody, senderId, clientId: item.id }),
+      body: JSON.stringify({ to: item.email, subject, htmlBody, senderId, clientId: item.id,
+        companyName: item.name || '', contactName: item.contact || '' }),
     });
     const data = await res.json();
 
@@ -1730,7 +1731,8 @@ async function sendDirectViaGmail(index) {
     const res = await fetch('/api/create-gmail-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: item.email, subject, htmlBody: htmlEmail, senderId, clientId: item.id }),
+      body: JSON.stringify({ to: item.email, subject, htmlBody: htmlEmail, senderId, clientId: item.id,
+        companyName: item.name || '', contactName: item.contact || '' }),
     });
     const data = await res.json();
     if (data.authUrl) {

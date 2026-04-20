@@ -78,7 +78,26 @@ app.get('/oauth2callback', async (req, res) => {
 // Gmail API で下書き作成
 app.post('/api/create-gmail-draft', async (req, res) => {
   try {
-    const { to, subject, htmlBody, senderId, clientId } = req.body;
+    const { to, subject, htmlBody: rawHtmlBody, senderId, clientId,
+            companyName, contactName } = req.body;
+
+    // 宛名（企業名・担当者名の両方が揃っている場合のみ）
+    const addressee = (companyName && contactName)
+      ? `${companyName} ${contactName}様` : null;
+
+    // To 表示名: 宛名あり→「企業名 担当者名様 <email>」
+    const toField = addressee ? `${addressee} <${to}>` : to;
+
+    // HTML本文先頭に宛名段落を挿入
+    let htmlBody = rawHtmlBody;
+    if (addressee) {
+      const safe = addressee.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const addresseeHtml = `<p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.8;">${safe}</p>`;
+      htmlBody = htmlBody.replace(
+        /(style="padding:32px 40px;[^"]*">)/,
+        `$1${addresseeHtml}\n`
+      );
+    }
 
     // 除外対象への送信を二重ブロック（clientId が渡された場合のみ）
     if (clientId) {
@@ -126,7 +145,7 @@ app.post('/api/create-gmail-draft', async (req, res) => {
     const mimeLines = [
       'Content-Type: text/html; charset=UTF-8',
       'MIME-Version: 1.0',
-      `To: ${encodeAddressHeader(to)}`,
+      `To: ${encodeAddressHeader(toField)}`,
       ...(ccAddresses ? [`Cc: ${encodeAddressHeader(ccAddresses)}`] : []),
       `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
       '',
