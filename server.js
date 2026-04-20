@@ -178,6 +178,7 @@ const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const CLIENTS_DB_ID = '748fc885-8796-49a2-8d91-aa1c131f8b58';
 const CONTACTS_DB_ID = '7d9642c7-55ec-4d2e-913d-f8f10e4f82b1';
+const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 
 // 送信除外カテゴリ（ハードコード・UI変更不可）
 const EXCLUDED_CATEGORIES = ['原料仕入先', '製造委託先'];
@@ -750,7 +751,7 @@ ${industryInstruction}
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: CLAUDE_MODEL,
         max_tokens: 1200,
         system: systemPrompt,
         messages: [{ role: 'user', content: userContent }]
@@ -1058,7 +1059,7 @@ app.post('/api/claude/generate-client', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: CLAUDE_MODEL,
         max_tokens: 1200,
         system: systemPrompt,
         messages: [{ role: 'user', content: `上記の取引先情報をもとに、フォローアップメールを生成してください。本日は${new Date().toISOString().split('T')[0]}です。` }]
@@ -1094,7 +1095,7 @@ app.post('/api/summarize-contact', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': CLAUDE_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: CLAUDE_MODEL,
         max_tokens: 150,
         messages: [{
           role: 'user',
