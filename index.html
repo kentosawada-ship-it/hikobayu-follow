@@ -770,12 +770,13 @@ function getTabData(tab) {
     );
   }
   if (tab === 'new-leads') {
-    return clientData.filter(item =>
-      !skipped.has(item.id) &&
-      item.stage === '新規リード' &&
-      !item.nextFollowDate &&
-      daysSince(item.createdTime) >= 3
-    );
+    return clientData
+      .filter(item =>
+        !skipped.has(item.id) &&
+        !item.lastFollowDate &&
+        !!item.email
+      )
+      .sort((a, b) => new Date(a.createdTime) - new Date(b.createdTime));
   }
   if (tab === 'excluded') {
     const manualIds = new Set(getManualExcluded().map(e => e.clientId));
@@ -1497,7 +1498,7 @@ function renderClientCard(item, index) {
   const overdueBanner = overdueDays !== null && overdueDays > 0
     ? `<div class="overdue-banner">⏰ 次回フォロー日を ${overdueDays} 日超過しています</div>`
     : '';
-  const isNewLead = item.stage === '新規リード' && !item.nextFollowDate && daysSince(item.createdTime) >= 3;
+  const isNewLead = !item.lastFollowDate && !!item.email;
   const newLeadBanner = isNewLead
     ? `<div class="new-lead-banner">🌱 登録から ${daysSince(item.createdTime)} 日経過・初回アプローチのタイミングです</div>`
     : '';
