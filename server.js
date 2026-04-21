@@ -1268,6 +1268,58 @@ app.get('/api/sync-gmail', async (req, res) => {
   }
 });
 
+// デバッグ用：各ステップの状態を確認
+app.get('/api/sync-gmail/debug', async (req, res) => {
+  const result = { whitelist: [], accounts: [] };
+
+  // ホワイトリスト確認
+  try {
+    let cursor;
+    do {
+      const body = { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) };
+      const r = await fetch(`https://api.notion.com/v1/databases/${CLIENTS_DB_ID}/query`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${NOTION_TOKEN}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await r.json();
+      for (const page of data.results || []) {
+        const email = page.properties['メールアドレス']?.email;
+        const name  = page.properties['企業名']?.title?.[0]?.plain_text || '';
+        result.whitelist.push({ name, email: email || '(未設定)' });
+      }
+      cursor = data.has_more ? data.next_cursor : undefined;
+    } while (cursor);
+  } catch (e) {
+    result.whitelistError = e.message;
+  }
+
+  // 各アカウントのGmail状態確認
+  const allTokens = loadGmailTokens();
+  for (const account of SENDER_ACCOUNTS) {
+    const info = { id: account.id, email: account.email, hasToken: false, messages: 0, error: null };
+    const accountTokens = allTokens[account.id];
+    if (!accountTokens?.refresh_token) { result.accounts.push(info); continue; }
+    info.hasToken = true;
+    try {
+      const client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET,
+        process.env.OAUTH_REDIRECT_URL || 'http://localhost:3000/oauth2callback'
+      );
+      client.setCredentials(accountTokens);
+      const gmail = google.gmail({ version: 'v1', auth: client });
+      const listRes = await gmail.users.messages.list({ userId: 'me', q: 'in:inbox newer_than:7d -from:me', maxResults: 10 });
+      info.messages = listRes.data.resultSizeEstimate || 0;
+      info.messageIds = (listRes.data.messages || []).map(m => m.id).slice(0, 3);
+    } catch (e) {
+      info.error = e.message;
+    }
+    result.accounts.push(info);
+  }
+
+  res.json(result);
+});
+
 app.listen(PORT, () => {
   console.log(`HIKOBAYU Follow List: http://localhost:${PORT}`);
 
