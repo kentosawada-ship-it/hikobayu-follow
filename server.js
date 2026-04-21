@@ -43,6 +43,46 @@ function saveGmailTokens(senderId, tokens) {
   }
 }
 
+// Render 環境変数を API 経由で自動更新（OAuth 再認証後の永続化）
+async function updateRenderEnvVar(key, value) {
+  const apiKey = process.env.RENDER_API_KEY;
+  const serviceId = process.env.RENDER_SERVICE_ID;
+  if (!apiKey || !serviceId) {
+    console.log(`[Render] RENDER_API_KEY / RENDER_SERVICE_ID 未設定 → env var "${key}" の自動更新をスキップ`);
+    return;
+  }
+  try {
+    // 現在の env var 一覧を取得
+    const listRes = await fetch(`https://api.render.com/v1/services/${serviceId}/env-vars`, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' }
+    });
+    if (!listRes.ok) throw new Error(`Render API GET failed: ${listRes.status}`);
+    const envVars = await listRes.json();
+
+    // 対象キーを更新（なければ追加）。マスクされた値は process.env から補完して上書きを防ぐ
+    let found = false;
+    const updated = envVars.map(e => {
+      if (e.key === key) { found = true; return { key: e.key, value }; }
+      return { key: e.key, value: e.value || process.env[e.key] || '' };
+    });
+    if (!found) updated.push({ key, value });
+
+    const putRes = await fetch(`https://api.render.com/v1/services/${serviceId}/env-vars`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(updated)
+    });
+    if (!putRes.ok) throw new Error(`Render API PUT failed: ${putRes.status}`);
+    console.log(`[Render] env var "${key}" を自動更新しました ✅`);
+  } catch (err) {
+    console.warn(`[Render] env var 更新失敗（手動設定が必要）: ${err.message}`);
+  }
+}
+
 // OAuth2 認証URL生成
 app.get('/api/auth/google', (req, res) => {
   const { senderId } = req.query;
@@ -62,11 +102,24 @@ app.get('/oauth2callback', async (req, res) => {
   try {
     const { tokens } = await oauth2Client.getToken(code);
     saveGmailTokens(senderId, tokens);
+
+    // refresh_token が得られた場合、Render env var を自動更新（再起動後も有効になる）
+    let renderUpdated = false;
+    if (tokens.refresh_token) {
+      const envKey = `GMAIL_REFRESH_TOKEN_${senderId.toUpperCase()}`;
+      await updateRenderEnvVar(envKey, tokens.refresh_token);
+      renderUpdated = !!(process.env.RENDER_API_KEY && process.env.RENDER_SERVICE_ID);
+    }
+
     const sender = SENDER_ACCOUNTS.find(s => s.id === senderId);
     res.send(`
       <html><body style="font-family:sans-serif;padding:40px;text-align:center;">
         <h2>✅ 認証完了</h2>
         <p>${sender?.label || senderId} の Gmail API 認証が完了しました。</p>
+        ${renderUpdated
+          ? '<p style="color:#16a34a;">🔒 Render の環境変数も自動更新済み。再起動後も有効です。</p>'
+          : '<p style="color:#888;font-size:13px;">（RENDER_API_KEY / RENDER_SERVICE_ID が未設定のため、手動での env var 更新が必要です）</p>'
+        }
         <p>このタブを閉じてください。</p>
       </body></html>
     `);
