@@ -115,13 +115,20 @@ app.get('/oauth2callback', async (req, res) => {
     }
 
     const sender = SENDER_ACCOUNTS.find(s => s.id === senderId);
+    const envKey = `GMAIL_REFRESH_TOKEN_${senderId.toUpperCase()}`;
     res.send(`
-      <html><body style="font-family:sans-serif;padding:40px;text-align:center;">
+      <html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:auto;">
         <h2>✅ 認証完了</h2>
         <p>${sender?.label || senderId} の Gmail API 認証が完了しました。</p>
         ${renderUpdated
           ? '<p style="color:#16a34a;">🔒 Render の環境変数も自動更新済み。再起動後も有効です。</p>'
-          : '<p style="color:#888;font-size:13px;">（RENDER_API_KEY / RENDER_SERVICE_ID が未設定のため、手動での env var 更新が必要です）</p>'
+          : `<div style="background:#fff8e1;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0;">
+              <p style="margin:0 0 8px;font-weight:bold;color:#b45309;">⚠️ Render env var を手動で更新してください</p>
+              <p style="margin:0 0 8px;font-size:13px;">以下のキーと値を Render の Environment Variables に設定してください：</p>
+              <p style="margin:0 0 4px;font-size:13px;"><strong>キー:</strong> <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;">${envKey}</code></p>
+              <p style="margin:0 0 4px;font-size:13px;"><strong>値:</strong></p>
+              <textarea readonly style="width:100%;height:60px;font-size:11px;font-family:monospace;background:#f9fafb;border:1px solid #d1d5db;border-radius:4px;padding:8px;">${tokens.refresh_token || '(refresh_token が返されませんでした — 既に認証済みのため。Googleアカウントのアクセス管理でアプリの権限を削除してから再認証してください)'}</textarea>
+            </div>`
         }
         <p>このタブを閉じてください。</p>
       </body></html>
