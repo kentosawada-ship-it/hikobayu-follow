@@ -90,7 +90,10 @@ app.get('/api/auth/google', (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
-    scope: ['https://www.googleapis.com/auth/gmail.compose'],
+    scope: [
+      'https://www.googleapis.com/auth/gmail.compose',
+      'https://www.googleapis.com/auth/gmail.readonly',
+    ],
     state: senderId,
   });
   res.redirect(url);
@@ -1125,6 +1128,146 @@ app.post('/api/clients/delete-empty', async (req, res) => {
   }
 });
 
+// ============================================================
+// Gmail受信自動取得バッチ
+// 取引先マスターのメールアドレスと一致する受信メールを
+// コンタクト履歴DBに自動追加する（1日1回 / 手動実行も可）
+// ============================================================
+
+async function syncGmailInbox() {
+  const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+  console.log(`[Gmail同期] 開始: ${now}`);
+
+  // 1. 取引先マスターからホワイトリスト取得 (email → {pageId, name})
+  const whitelist = new Map();
+  let cursor;
+  do {
+    const body = { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) };
+    const res = await fetch(`https://api.notion.com/v1/databases/${CLIENTS_DB_ID}/query`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${NOTION_TOKEN}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    for (const page of data.results || []) {
+      const email = page.properties['メールアドレス']?.email;
+      const name  = page.properties['企業名']?.title?.[0]?.plain_text || '';
+      if (email) whitelist.set(email.toLowerCase(), { pageId: page.id, name });
+    }
+    cursor = data.has_more ? data.next_cursor : undefined;
+  } while (cursor);
+
+  console.log(`[Gmail同期] ホワイトリスト: ${whitelist.size}件`);
+
+  // 2. 各Gmailアカウントで受信メールを取得
+  const allTokens = loadGmailTokens();
+  let totalAdded = 0;
+
+  for (const account of SENDER_ACCOUNTS) {
+    const accountTokens = allTokens[account.id];
+    if (!accountTokens?.refresh_token) {
+      console.log(`[Gmail同期] ${account.id}: トークンなし → スキップ`);
+      continue;
+    }
+    try {
+      const client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.OAUTH_REDIRECT_URL || 'http://localhost:3000/oauth2callback'
+      );
+      client.setCredentials(accountTokens);
+      client.on('tokens', (t) => saveGmailTokens(account.id, { ...accountTokens, ...t }));
+
+      const gmail = google.gmail({ version: 'v1', auth: client });
+
+      // 過去7日間の受信メール（自分自身からは除外）
+      const listRes = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'in:inbox newer_than:7d -from:me',
+        maxResults: 50
+      });
+      const messages = listRes.data.messages || [];
+      console.log(`[Gmail同期] ${account.id}: ${messages.length}件の候補`);
+
+      for (const msg of messages) {
+        try {
+          const detail = await gmail.users.messages.get({
+            userId: 'me', id: msg.id, format: 'metadata',
+            metadataHeaders: ['From', 'Subject', 'Date', 'Message-ID']
+          });
+          const headers   = detail.data.payload?.headers || [];
+          const getHeader = (n) => headers.find(h => h.name === n)?.value || '';
+
+          const from      = getHeader('From');
+          const subject   = getHeader('Subject');
+          const dateStr   = getHeader('Date');
+          const messageId = getHeader('Message-ID');
+
+          // 差出人メールアドレスを抽出
+          const emailMatch  = from.match(/<([^>]+)>/) || from.match(/(\S+@\S+)/);
+          const senderEmail = emailMatch ? emailMatch[1].toLowerCase() : '';
+          if (!senderEmail || !whitelist.has(senderEmail)) continue;
+
+          const { pageId: clientPageId, name: clientName } = whitelist.get(senderEmail);
+
+          // 重複チェック: 同じMessage-IDがコンタクト履歴に存在するか
+          const dupRes  = await fetch(`https://api.notion.com/v1/databases/${CONTACTS_DB_ID}/query`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${NOTION_TOKEN}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filter: { property: '内容メモ', rich_text: { contains: messageId } }, page_size: 1 })
+          });
+          const dupData = await dupRes.json();
+          if (dupData.results?.length > 0) continue; // 登録済み → スキップ
+
+          // 受信日（JST）
+          const receivedDate    = new Date(dateStr);
+          const receivedDateStr = new Date(receivedDate.getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const title           = `${receivedDateStr} ${clientName} メール受信`;
+
+          // コンタクト履歴に新規追加
+          await fetch('https://api.notion.com/v1/pages', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${NOTION_TOKEN}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              parent: { database_id: CONTACTS_DB_ID },
+              properties: {
+                'タイトル':      { title:     [{ text: { content: title } }] },
+                '接触日':        { date:      { start: receivedDateStr } },
+                '接触種別':      { select:    { name: 'メール受信' } },
+                '取引先':        { relation:  [{ id: clientPageId }] },
+                'レスポンス有無':{ select:    { name: 'レスポンスあり' } },
+                '内容メモ':      { rich_text: [{ text: { content: `件名: ${subject}\n送信者: ${from}\nMessageID: ${messageId}` } }] },
+              }
+            })
+          });
+
+          console.log(`[Gmail同期] 追加: ${title}`);
+          totalAdded++;
+          await new Promise(r => setTimeout(r, 300)); // Notion rate limit 対策
+        } catch (e) {
+          console.warn(`[Gmail同期] メッセージ処理エラー: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Gmail同期] ${account.id} エラー: ${e.message}`);
+    }
+  }
+
+  console.log(`[Gmail同期] 完了: ${totalAdded}件追加`);
+  return totalAdded;
+}
+
+// 手動実行エンドポイント（テスト・強制実行用）
+app.get('/api/sync-gmail', async (req, res) => {
+  try {
+    const added = await syncGmailInbox();
+    res.json({ ok: true, added });
+  } catch (err) {
+    console.error('[Gmail同期] エラー:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`HIKOBAYU Follow List: http://localhost:${PORT}`);
 
@@ -1162,4 +1305,21 @@ app.listen(PORT, () => {
       console.log('browser-sync not available, skipping:', e.message);
     }
   }
+
+  // --- Gmail受信自動同期スケジューラー（毎日 08:00 JST）---
+  function scheduleGmailSync() {
+    const now     = new Date();
+    const nowJST  = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const nextRun = new Date(nowJST);
+    nextRun.setUTCHours(23, 0, 0, 0); // 23:00 UTC = 08:00 JST
+    if (nextRun <= nowJST) nextRun.setUTCDate(nextRun.getUTCDate() + 1);
+    const msUntilNext = nextRun.getTime() - nowJST.getTime();
+    console.log(`[Gmail同期] 次回実行: ${nextRun.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} (${Math.round(msUntilNext / 60000)}分後)`);
+    setTimeout(async () => {
+      await syncGmailInbox();
+      setInterval(syncGmailInbox, 24 * 60 * 60 * 1000); // 以降24時間ごと
+    }, msUntilNext);
+  }
+
+  scheduleGmailSync();
 });
