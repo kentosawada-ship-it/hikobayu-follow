@@ -2294,10 +2294,25 @@ async function initClients() {
     );
 
     const allExtracted = pages.map(p => extractClientProps(p));
-    allClientData = allExtracted; // 全件保存（電話帳用：hiddenIds・除外カテゴリを無視）
+    // 電話帳用マスターデータ: フィルタなし（channel='all', stage='all'）のときだけ更新
+    // フィルター付きfetchでは上書きしない（電話帳は常に全件表示が必要）
+    if (clientChannel === 'all' && clientStage === 'all') {
+      allClientData = allExtracted;
+    }
     excludedClientData = allExtracted.filter(item => isExcluded(item));
     noEmailClientData  = allExtracted.filter(item => isNoEmail(item));
     clientData = allExtracted.filter(item => !isExcluded(item) && !isNoEmail(item) && !hiddenIds.has(item.id));
+
+    // デバッグログ（ブラウザConsoleで件数内訳を確認可能）
+    console.log(
+      `[initClients] total=${allExtracted.length}` +
+      ` | allClientData=${allClientData.length}` +
+      ` | clientData=${clientData.length}` +
+      ` | excluded=${excludedClientData.length}` +
+      ` | noEmail=${noEmailClientData.length}` +
+      ` | hiddenIds=${hiddenIds.size}` +
+      ` | channel=${clientChannel} stage=${clientStage}`
+    );
 
     document.getElementById('dateInfo').textContent =
       `${formatDate(today())}｜取引先：${clientData.length}件`;
@@ -2343,7 +2358,25 @@ function pbSuggestNextFollowDate(newStageValue, currentStage, sentDate) {
 // --- データ取得：ソート＋検索フィルタ ---
 function getPhonebookData() {
   // 母集団: 営業除外カテゴリ以外の全員（hiddenIds・email有無を問わず全員表示）
+  const excluded = allClientData.filter(item => isExcluded(item));
   let data = allClientData.filter(item => !isExcluded(item));
+  console.log(
+    `[phonebook] allClientData=${allClientData.length}` +
+    ` | excluded=${excluded.length}` +
+    ` | target=${data.length}`
+  );
+  if (excluded.length > 0) {
+    excluded.forEach(item =>
+      console.log(`[phonebook] Excluded: ${item.name} (${item.transactionCategory})`)
+    );
+  }
+  // いろは（デバッグ用: 確認後削除可）
+  const iroha = allClientData.find(item => item.name === 'いろは' || (item.email || '').includes('cnkk'));
+  if (iroha) {
+    console.log(`[phonebook] いろは found: id=${iroha.id} stage=${iroha.stage} category=${iroha.transactionCategory} excluded=${isExcluded(iroha)}`);
+  } else {
+    console.warn('[phonebook] いろは NOT FOUND in allClientData');
+  }
 
   // 検索フィルタ
   const q = phonebookSearchQuery.trim().toLowerCase();
