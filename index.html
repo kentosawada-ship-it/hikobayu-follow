@@ -859,6 +859,7 @@ let templates = [];
 let clientData = [];
 let excludedClientData = []; // 取引区分除外レコード
 let noEmailClientData = [];  // メールアドレス未登録レコード
+let allClientData = [];      // 全取引先（hiddenIds・除外カテゴリを含む全件）
 let clientChannel = 'all';
 let clientStage = 'all';
 let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded' | 'no-email' | 'phonebook'
@@ -1518,7 +1519,7 @@ function extractClientProps(page) {
   return {
     id: page.id,
     name: p['企業名']?.title?.[0]?.plain_text || '（無題）',
-    contact: p['担当者名']?.rich_text?.[0]?.plain_text || '',
+    contact: (p['担当者名']?.rich_text?.[0]?.plain_text || '').replace(/\*\*/g, '').trim(),
     email: p['メールアドレス']?.email || '',
     transactionCategory: p['取引区分']?.select?.name || '',
     channel: p['ソース']?.select?.name || '',
@@ -2293,6 +2294,7 @@ async function initClients() {
     );
 
     const allExtracted = pages.map(p => extractClientProps(p));
+    allClientData = allExtracted; // 全件保存（電話帳用：hiddenIds・除外カテゴリを無視）
     excludedClientData = allExtracted.filter(item => isExcluded(item));
     noEmailClientData  = allExtracted.filter(item => isNoEmail(item));
     clientData = allExtracted.filter(item => !isExcluded(item) && !isNoEmail(item) && !hiddenIds.has(item.id));
@@ -2340,8 +2342,8 @@ function pbSuggestNextFollowDate(newStageValue, currentStage, sentDate) {
 
 // --- データ取得：ソート＋検索フィルタ ---
 function getPhonebookData() {
-  // 母集団: 除外フラグなし全員（email有・なし両方。excludedClientDataは除く）
-  let data = [...clientData, ...noEmailClientData];
+  // 母集団: 営業除外カテゴリ以外の全員（hiddenIds・email有無を問わず全員表示）
+  let data = allClientData.filter(item => !isExcluded(item));
 
   // 検索フィルタ
   const q = phonebookSearchQuery.trim().toLowerCase();

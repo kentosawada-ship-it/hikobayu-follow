@@ -759,7 +759,7 @@ app.post('/api/clients/query', async (req, res) => {
     }
 
     const queryBody = {
-      sorts: [{ property: '次回フォロー日', direction: 'ascending' }],
+      sorts: [{ property: '前回フォロー日', direction: 'descending' }],
       page_size: 100,
     };
     if (filters.length > 0) {
@@ -795,6 +795,7 @@ app.post('/api/clients/query', async (req, res) => {
       hasMore = data.has_more;
       startCursor = data.next_cursor;
     }
+    console.log(`[clients/query] Fetched ${allResults.length} clients from Notion`);
     res.json({ results: allResults });
   } catch (err) {
     console.error('Clients query error:', err);
