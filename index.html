@@ -882,9 +882,16 @@ let clientData = [];
 let excludedClientData = []; // 取引区分除外レコード
 let noEmailClientData = [];  // メールアドレス未登録レコード
 let allClientData = [];      // 全取引先（hiddenIds・除外カテゴリを含む全件）
+let allTabClientData = [];   // 「全件」タブの描画用データ（getCardItem に使用）
 let clientChannel = 'all';
 let clientStage = 'all';
-let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded' | 'no-email' | 'phonebook'
+let activeTab = 'today'; // 'all' | 'today' | 'new-leads' | 'excluded' | 'no-email'
+
+// カードアクション関数が参照するデータ配列を返す
+// 「全件」タブのとき allTabClientData を、それ以外は clientData を使う
+function getCardItem(idx) {
+  return activeTab === 'all' ? allTabClientData[idx] : clientData[idx];
+}
 
 // === 電話帳タブ用状態 ===
 let phonebookData = [];
@@ -914,6 +921,10 @@ function addToSessionSkip(clientId) {
 function getTabData(tab) {
   const todayStr = today();
   const skipped = getSkippedClients();
+  if (tab === 'all') {
+    // 全件: 営業除外カテゴリ（原料仕入先・製造委託先）だけ除く
+    return allClientData.filter(item => !isExcluded(item));
+  }
   if (tab === 'today') {
     return clientData.filter(item =>
       !skipped.has(item.id) && (
@@ -1109,7 +1120,7 @@ function isManualExcluded(clientId) {
 }
 
 async function holdClient(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   if (!item) return;
   const nextDate = addDays(today(), 30);
   const btn = document.querySelector(`#client-card-${index} .btn-hold`);
@@ -1136,7 +1147,7 @@ async function holdClient(index) {
 }
 
 function manualExcludeClient(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   if (!item) return;
   const reason = prompt(`「${item.name}」を除外します。\n理由を入力してください（任意）：`) ?? null;
   if (reason === null) return; // キャンセル
@@ -1421,7 +1432,7 @@ function showMarkAsSentBanner(index) {
 
 // 「✅ 送信済みにする」ボタン処理
 async function markAsSent(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   if (!item) return;
 
   const payload = _pendingSentData[index] || {};
@@ -1646,7 +1657,7 @@ function renderClientCard(item, index) {
 
 // === Gmail 下書き作成（正式フロー）===
 async function sendDirectViaGmail(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   if (!item.email) { alert('メールアドレスが登録されていません'); return; }
 
   const senderSel = document.getElementById('clientSenderSelect');
@@ -1739,7 +1750,7 @@ function applyCardDone(index, bannerText) {
 
 // === 取引先 送信済みボタン ===
 async function markClientDone(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   const btn = document.getElementById(`client-done-${index}`);
   btn.disabled = true;
   btn.textContent = '更新中...';
@@ -1806,6 +1817,7 @@ async function markClientDone(index) {
 // === Phase3 タブ ===
 function renderWithTabs() {
   const main = document.getElementById('main');
+  const allCnt      = getTabData('all').length;
   const todayCnt    = getTabData('today').length;
   const newCnt      = getTabData('new-leads').length;
   const excludeCnt  = getTabData('excluded').length;
@@ -1813,6 +1825,9 @@ function renderWithTabs() {
 
   main.innerHTML = `
     <div class="phase3-tab-bar">
+      <button class="phase3-tab-btn ${activeTab==='all'?'active':''}" data-tab="all" onclick="switchTab('all')">
+        全件 <span class="tab-badge">${allCnt}</span>
+      </button>
       <button class="phase3-tab-btn ${activeTab==='today'?'active':''}" data-tab="today" onclick="switchTab('today')">
         今日のフォロー候補 <span class="tab-badge">${todayCnt}</span>
       </button>
@@ -1842,6 +1857,7 @@ function switchTab(tab) {
 
 function updateTabCounts() {
   const counts = {
+    'all':      getTabData('all').length,
     'today':    getTabData('today').length,
     'new-leads':getTabData('new-leads').length,
     'excluded': getTabData('excluded').length,
@@ -1870,7 +1886,34 @@ function renderTabContent() {
   const el = document.getElementById('tab-content');
   if (!el) return;
 
-  const data = clientSearchQuery ? applySearch(clientData) : getTabData(activeTab);
+  // 検索時は現在タブの全件を検索対象にする（全件タブなら132件が対象）
+  const tabBase = getTabData(activeTab);
+  const data = clientSearchQuery ? applySearch(tabBase) : tabBase;
+
+  // 全件タブ: allTabClientData を確定してからカードを描画
+  if (activeTab === 'all') {
+    allTabClientData = tabBase; // 検索前の全件を保持（getCardItem用）
+    if (data.length === 0) {
+      el.innerHTML = emptyHtml('取引先がありません');
+      return;
+    }
+    el.innerHTML = data.map((item, i) => {
+      // allTabClientData 内のインデックスを使用
+      const idx = allTabClientData.indexOf(item);
+      return item.email
+        ? renderClientCard(item, idx)
+        : renderNoEmailCard(item);
+    }).join('');
+    // 送信済みバナー復元
+    data.forEach(item => {
+      const idx = allTabClientData.indexOf(item);
+      try {
+        const doneBanner = sessionStorage.getItem('hf_done_' + item.id);
+        if (doneBanner) applyCardDone(idx, doneBanner);
+      } catch(e) {}
+    });
+    return;
+  }
 
   if (activeTab === 'excluded') {
     if (data.length === 0) {
@@ -1977,7 +2020,7 @@ function renderNoEmailCard(item) {
 
 // === Phase3: スキップ・除外アクション ===
 async function skipClient(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   if (!item) return;
   const btn = document.querySelector(`#client-card-${index} .btn-skip`);
   if (btn) { btn.disabled = true; btn.textContent = '更新中...'; }
@@ -2006,7 +2049,7 @@ async function skipClient(index) {
 }
 
 function excludeClient(index) {
-  const item = clientData[index];
+  const item = getCardItem(index);
   if (!item) return;
   addToSessionSkip(item.id);
   const card = document.getElementById(`client-card-${index}`);
@@ -2336,8 +2379,12 @@ async function initClients() {
       ` | channel=${clientChannel} stage=${clientStage}`
     );
 
+    // 内訳表示: allClientData 全件ベース（メアド有/なし）
+    const _infoTotal   = allClientData.length;
+    const _infoWithMail = allClientData.filter(item => !!item.email).length;
+    const _infoNoMail   = _infoTotal - _infoWithMail;
     document.getElementById('dateInfo').textContent =
-      `${formatDate(today())}｜取引先：${clientData.length}件`;
+      `${formatDate(today())}｜取引先: ${_infoTotal}件（メアド有: ${_infoWithMail}件 / メアドなし: ${_infoNoMail}件）`;
 
     renderWithTabs();
 
