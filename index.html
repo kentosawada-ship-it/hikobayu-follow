@@ -619,6 +619,23 @@
       .filter-bar { flex-direction: column; align-items: flex-start; }
     }
 
+    /* === トースト通知 === */
+    #toast-container {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      background: #1e293b; color: #fff; border-radius: 10px;
+      padding: 12px 20px; font-size: 14px; line-height: 1.5;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      opacity: 0; transform: translateY(12px);
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none; text-align: center; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.toast-error { background: #b91c1c; }
+
     /* === 電話帳タブ === */
     .pb-toolbar { margin-bottom: 14px; }
     .pb-search-row { position: relative; margin-bottom: 8px; }
@@ -735,6 +752,33 @@
       <div id="phonebook-main"></div>
     </div>
   </div>
+
+<!-- トースト通知コンテナ -->
+<div id="toast-container"></div>
+
+<!-- Gemini戦略モーダル（初回ガイド） -->
+<div class="modal-overlay" id="geminiGuideModal" onclick="if(event.target===this)closeGeminiGuideModal()">
+  <div class="modal" style="max-width:420px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 style="margin:0;font-size:17px;">🌀 Geminiで返信戦略を練る</h2>
+      <button onclick="closeGeminiGuideModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666;line-height:1;padding:0 4px;">✕</button>
+    </div>
+    <ol style="font-size:14px;line-height:2;padding-left:20px;margin:0 0 18px;">
+      <li>このボタンを押すと、Geminiが新しいタブで開きます</li>
+      <li>プロンプトは自動でコピーされています</li>
+      <li>Geminiの画面で <strong>Cmd+V → Enter</strong> を押してください</li>
+      <li>Geminiと戦略を考え、返信文を作ります</li>
+      <li>できた返信文を、このシステムの本文欄にペーストして送信</li>
+    </ol>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#666;cursor:pointer;margin-bottom:18px;">
+      <input type="checkbox" id="geminiGuideNoShow" style="accent-color:#2d5a27;">
+      次回から表示しない
+    </label>
+    <button onclick="confirmGeminiGuide()" class="btn btn-send-html" style="width:100%;justify-content:center;font-size:15px;padding:13px;">
+      🌀 Geminiを開く
+    </button>
+  </div>
+</div>
 
 <!-- 添付資料設定モーダル -->
   <div class="modal-overlay" id="attachModal">
@@ -2401,11 +2445,18 @@ function renderPhonebookCard(item, pbIdx) {
             </div>
           </div>
         </div>
-        <button onclick="togglePhonebookCompose(${pbIdx})"
-          class="btn pb-compose-btn" id="pb-compose-btn-${pbIdx}"
-          style="flex-shrink:0;padding:8px 14px;font-size:13px;">
-          ✉️ メール作成
-        </button>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <button onclick="openGeminiStrategy(${pbIdx})"
+            style="background:#f0f4ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap;"
+            title="Geminiでこの相手への返信戦略を練る">
+            🌀 戦略を練る
+          </button>
+          <button onclick="togglePhonebookCompose(${pbIdx})"
+            class="btn pb-compose-btn" id="pb-compose-btn-${pbIdx}"
+            style="padding:8px 14px;font-size:13px;">
+            ✉️ メール作成
+          </button>
+        </div>
       </div>
       <div id="pb-compose-${pbIdx}" style="display:none;border-top:1px solid #eee;padding:14px 16px;">
         <div style="font-size:12px;color:#888;margin-bottom:10px;">📧 宛先：${escapeHtml(item.email)}</div>
@@ -2424,6 +2475,81 @@ function renderPhonebookCard(item, pbIdx) {
       </div>
     </div>
   `;
+}
+
+// === トースト通知 ===
+let _toastTimer = null;
+function showToast(msg, isError = false) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (isError ? ' toast-error' : '');
+  el.textContent = msg;
+  container.appendChild(el);
+  // アニメーション
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => { el.classList.add('show'); });
+  });
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, 4000);
+}
+
+// === Gemini 戦略ボタン ===
+const GEMINI_PROMPT_TEMPLATE =
+`@Gmail {email} さんとの最新のやり取りを読み取ってください。
+
+今の状況を要約した上で、次に返信するにあたって何を考えるべきか、一緒に考えてください。
+
+方向性が固まったら、返信文を作ってください。`;
+
+const GEMINI_GUIDE_LS_KEY = 'thread_link_guide_shown';
+let _geminiPendingEmail = ''; // ガイドモーダルから確定ボタンを押したときに使うメアド
+
+function openGeminiStrategy(pbIdx) {
+  const item = phonebookData[pbIdx];
+  if (!item || !item.email) {
+    showToast('メールアドレスが登録されていません', true);
+    return;
+  }
+  _geminiPendingEmail = item.email;
+
+  // 初回のみガイドモーダルを表示
+  const alreadyShown = localStorage.getItem(GEMINI_GUIDE_LS_KEY);
+  if (!alreadyShown) {
+    document.getElementById('geminiGuideModal').classList.add('show');
+    return;
+  }
+
+  // 2回目以降：即実行
+  _executeGeminiOpen(_geminiPendingEmail);
+}
+
+function confirmGeminiGuide() {
+  // 「次回から表示しない」チェック状態を保存
+  if (document.getElementById('geminiGuideNoShow')?.checked) {
+    localStorage.setItem(GEMINI_GUIDE_LS_KEY, '1');
+  }
+  closeGeminiGuideModal();
+  _executeGeminiOpen(_geminiPendingEmail);
+}
+
+function closeGeminiGuideModal() {
+  document.getElementById('geminiGuideModal').classList.remove('show');
+}
+
+async function _executeGeminiOpen(email) {
+  const prompt = GEMINI_PROMPT_TEMPLATE.replace('{email}', email);
+  try {
+    await navigator.clipboard.writeText(prompt);
+    window.open('https://gemini.google.com/app', '_blank');
+    showToast('✅ プロンプトをコピーしました / Geminiが開いたら Cmd+V → Enter');
+  } catch (err) {
+    // クリップボードAPIが拒否された場合
+    window.open('https://gemini.google.com/app', '_blank');
+    showToast('⚠️ クリップボードへのコピーに失敗しました。手動でプロンプトを貼り付けてください', true);
+  }
 }
 
 function togglePhonebookCompose(pbIdx) {
