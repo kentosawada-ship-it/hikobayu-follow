@@ -664,6 +664,7 @@
       <span id="dateInfo"></span>
       <div class="header-actions">
         <button onclick="location.reload()">&#x1f504; 更新</button>
+        <button onclick="showPhonebook()" id="btn-phonebook">&#x1f4d2; 電話帳</button>
         <button onclick="showSentHistory()" id="btn-sent-history">&#x1f4ec; 送信済み一覧</button>
         <button onclick="openAttachSettings()">&#x1f4ce; 資料管理</button>
         <button onclick="openTemplateSettings()">&#x1f4dd; 定型文管理</button>
@@ -720,6 +721,18 @@
         <span id="sent-history-count" style="font-size:12px;color:#888;"></span>
       </div>
       <div id="sent-history-main"></div>
+    </div>
+  </div>
+
+  <!-- 電話帳ビュー -->
+  <div id="phonebook-view" style="display:none;">
+    <div class="container">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-top:4px;">
+        <button onclick="hidePhonebook()" style="background:none;border:1px solid #ccc;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">← フォロー一覧へ戻る</button>
+        <h2 style="font-size:16px;font-weight:700;color:#2d5a27;margin:0;">📒 電話帳</h2>
+        <span id="phonebook-count" style="font-size:12px;color:#888;"></span>
+      </div>
+      <div id="phonebook-main"></div>
     </div>
   </div>
 
@@ -1745,9 +1758,6 @@ function renderWithTabs() {
       <button class="phase3-tab-btn ${activeTab==='no-email'?'active':''}" data-tab="no-email" onclick="switchTab('no-email')">
         メアドなし <span class="tab-badge">${noEmailCnt}</span>
       </button>
-      <button class="phase3-tab-btn ${activeTab==='phonebook'?'active':''}" data-tab="phonebook" onclick="switchTab('phonebook')">
-        📒 電話帳
-      </button>
     </div>
     <div id="tab-content"></div>
   `;
@@ -1792,13 +1802,6 @@ function emptyHtml(defaultMsg) {
 function renderTabContent() {
   const el = document.getElementById('tab-content');
   if (!el) return;
-
-  // 電話帳タブは独自レンダラーへ
-  if (activeTab === 'phonebook') {
-    phonebookData = getPhonebookData();
-    renderPhonebookContent();
-    return;
-  }
 
   const data = clientSearchQuery ? applySearch(clientData) : getTabData(activeTab);
 
@@ -1945,6 +1948,91 @@ function excludeClient(index) {
     card.style.opacity = '0';
     setTimeout(() => { card.style.display = 'none'; updateTabCounts(); }, 300);
   }
+}
+
+// === 電話帳ビュー ===
+function showPhonebook() {
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('clientFilters').style.display = 'none';
+  document.getElementById('phonebook-view').style.display = 'block';
+  document.getElementById('btn-phonebook').style.background = '#e8f5e3';
+  initPhonebookView();
+}
+
+function hidePhonebook() {
+  document.getElementById('phonebook-view').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.getElementById('clientFilters').style.display = 'block';
+  document.getElementById('btn-phonebook').style.background = '';
+}
+
+function initPhonebookView() {
+  phonebookData = getPhonebookData();
+  const countEl = document.getElementById('phonebook-count');
+  if (countEl) countEl.textContent = `（${phonebookData.length}件）`;
+  const el = document.getElementById('phonebook-main');
+  if (!el) return;
+
+  const sortOptions = [
+    { value: 'lastContact-desc', label: '前回フォロー：新しい順' },
+    { value: 'lastContact-asc',  label: '前回フォロー：古い順' },
+    { value: 'kana',             label: '50音順' },
+    { value: 'created-desc',     label: '登録日：新しい順' },
+  ];
+  const sortHtml = sortOptions.map(o =>
+    `<button class="pb-sort-btn ${phonebookSortMode === o.value ? 'active' : ''}" onclick="setPbSortView('${o.value}')">${o.label}</button>`
+  ).join('');
+
+  const bulkBtnHtml = `<button class="pb-bulk-toggle ${phonebookBulkMode ? 'active' : ''}" onclick="togglePbBulkModeView()">
+    ${phonebookBulkMode ? '✅ 一斉送信モード ON' : '📢 一斉送信モード'}
+  </button>`;
+
+  const bulkSendBar = phonebookBulkMode ? `
+    <div class="pb-bulk-bar">
+      <span>選択中：<strong id="pbSelectedCount">0</strong>件</span>
+      <button onclick="openPbBulkModal()" class="btn btn-send-html" style="padding:8px 18px;font-size:14px;" id="pbBulkSendBtn" disabled>📨 一斉送信</button>
+      <button onclick="clearPbBulkSelection()" style="background:none;border:1px solid #ccc;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;color:#555;">選択解除</button>
+    </div>
+  ` : '';
+
+  const emptyMsg = phonebookSearchQuery
+    ? `「${escapeHtml(phonebookSearchQuery)}」に一致する取引先はありません`
+    : '電話帳に表示できる取引先がありません';
+  const cardsHtml = phonebookData.length === 0
+    ? `<div class="empty"><h2>${emptyMsg}</h2></div>`
+    : phonebookData.map((item, pbIdx) => renderPhonebookCard(item, pbIdx)).join('');
+
+  el.innerHTML = `
+    <div class="pb-toolbar">
+      <div class="pb-search-row">
+        <input class="pb-search-input" type="text" placeholder="🔍 企業名・担当者名・メアドで検索"
+          value="${escapeAttr(phonebookSearchQuery)}"
+          oninput="setPbSearchView(this.value)" />
+        ${phonebookSearchQuery ? `<button onclick="setPbSearchView('')" class="pb-search-clear">✕</button>` : ''}
+      </div>
+      <div class="pb-sort-row">${sortHtml}${bulkBtnHtml}</div>
+      ${bulkSendBar}
+    </div>
+    <div id="pb-card-list">${cardsHtml}</div>
+  `;
+  updatePbBulkBar();
+}
+
+// 電話帳ビュー内のソート・検索（再初期化でビューを更新）
+function setPbSortView(mode) {
+  phonebookSortMode = mode;
+  initPhonebookView();
+}
+
+function setPbSearchView(query) {
+  phonebookSearchQuery = query;
+  initPhonebookView();
+}
+
+function togglePbBulkModeView() {
+  phonebookBulkMode = !phonebookBulkMode;
+  phonebookSelected = new Set();
+  initPhonebookView();
 }
 
 // === 送信済み一覧 ===
