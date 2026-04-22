@@ -75,6 +75,25 @@
     }
     .filter-btn:hover { opacity: 0.85; }
 
+    /* ステージボタン カラーバリアント（非アクティブ時の枠色・文字色） */
+    .stage-btn-gray       { border-color:#aaa; color:#555; }
+    .stage-btn-yellow     { border-color:#d97706; color:#92400e; background:#fffbeb; }
+    .stage-btn-orange     { border-color:#ea580c; color:#9a3412; background:#fff7ed; }
+    .stage-btn-orange-d   { border-color:#c2410c; color:#7c2d12; background:#ffedd5; }
+    .stage-btn-red        { border-color:#dc2626; color:#991b1b; background:#fef2f2; }
+    .stage-btn-green      { border-color:#16a34a; color:#14532d; background:#f0fdf4; }
+    .stage-btn-blue       { border-color:#2563eb; color:#1e3a8a; background:#eff6ff; }
+    /* アクティブ時は共通の緑で上書き */
+    .filter-btn.active.stage-btn-gray,
+    .filter-btn.active.stage-btn-yellow,
+    .filter-btn.active.stage-btn-orange,
+    .filter-btn.active.stage-btn-orange-d,
+    .filter-btn.active.stage-btn-red,
+    .filter-btn.active.stage-btn-green,
+    .filter-btn.active.stage-btn-blue {
+      background: #2d5a27; color: #fff; border-color: #2d5a27;
+    }
+
     /* 送信者セレクト */
     .sender-select-wrap {
       display: flex;
@@ -695,13 +714,16 @@
         <button class="filter-btn" data-channel="freee" onclick="setClientChannel('freee')">freee/直接</button>
         <button class="filter-btn" data-channel="goooods" onclick="setClientChannel('goooods')">goooods</button>
       </div>
-      <div class="client-filter-bar">
+      <div class="client-filter-bar" style="flex-wrap:wrap;gap:6px 4px;">
         <label>ステージ：</label>
         <button class="filter-btn active" data-stage="all" onclick="setClientStage('all')">すべて</button>
-        <button class="filter-btn" data-stage="新規リード" onclick="setClientStage('新規リード')">新規リード</button>
-        <button class="filter-btn" data-stage="商談中" onclick="setClientStage('商談中')">商談中</button>
-        <button class="filter-btn" data-stage="取引中" onclick="setClientStage('取引中')">取引中</button>
-        <button class="filter-btn" data-stage="休眠" onclick="setClientStage('休眠')">休眠</button>
+        <button class="filter-btn stage-btn-gray"       data-stage="未フォロー"   onclick="setClientStage('未フォロー')">未フォロー</button>
+        <button class="filter-btn stage-btn-yellow"     data-stage="フォロー1回目" onclick="setClientStage('フォロー1回目')">フォロー1回目</button>
+        <button class="filter-btn stage-btn-orange"     data-stage="フォロー2回目" onclick="setClientStage('フォロー2回目')">フォロー2回目</button>
+        <button class="filter-btn stage-btn-orange-d"   data-stage="フォロー3回目" onclick="setClientStage('フォロー3回目')">フォロー3回目</button>
+        <button class="filter-btn stage-btn-red"        data-stage="フォロー4回目" onclick="setClientStage('フォロー4回目')">フォロー4回目</button>
+        <button class="filter-btn stage-btn-green"      data-stage="取引先"       onclick="setClientStage('取引先')">取引先</button>
+        <button class="filter-btn stage-btn-blue"       data-stage="ナーチャリング" onclick="setClientStage('ナーチャリング')">ナーチャリング</button>
       </div>
       <div class="client-search-wrap">
         <label style="font-size:13px;color:#666;">🔍</label>

@@ -753,8 +753,12 @@ app.post('/api/clients/query', async (req, res) => {
       filters.push({ property: 'ソース', select: { equals: 'goooods' } });
     }
 
-    // ステージフィルター
+    // ステージフィルター（Notion取引先マスターの選択肢のみ受け付ける）
+    const VALID_STAGES = ['未フォロー', 'フォロー1回目', 'フォロー2回目', 'フォロー3回目', 'フォロー4回目', '取引先', 'ナーチャリング'];
     if (stage && stage !== 'all') {
+      if (!VALID_STAGES.includes(stage)) {
+        return res.status(400).json({ error: `無効なステージ値: "${stage}". 許可値: ${VALID_STAGES.join(', ')}` });
+      }
       filters.push({ property: 'ステージ', select: { equals: stage } });
     }
 
