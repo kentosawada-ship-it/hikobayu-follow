@@ -618,6 +618,42 @@
       .btn { justify-content: center; }
       .filter-bar { flex-direction: column; align-items: flex-start; }
     }
+
+    /* === 電話帳タブ === */
+    .pb-toolbar { margin-bottom: 14px; }
+    .pb-search-row { position: relative; margin-bottom: 8px; }
+    .pb-search-input {
+      width: 100%; box-sizing: border-box;
+      padding: 10px 36px 10px 12px;
+      border: 1px solid #e0e8de; border-radius: 8px; font-size: 14px;
+      background: #fff;
+    }
+    .pb-search-input:focus { outline: none; border-color: #5a9e4b; }
+    .pb-search-clear {
+      position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; font-size: 16px; cursor: pointer; color: #888;
+    }
+    .pb-sort-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; }
+    .pb-sort-btn {
+      background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px;
+      padding: 6px 12px; font-size: 12px; cursor: pointer; color: #555;
+    }
+    .pb-sort-btn.active { background: #e8f5e3; border-color: #b6d9b0; color: #2d5a27; font-weight: 600; }
+    .pb-bulk-toggle {
+      background: #f9fafb; border: 1px solid #d1d5db; border-radius: 6px;
+      padding: 6px 12px; font-size: 12px; cursor: pointer; color: #555; margin-left: auto;
+    }
+    .pb-bulk-toggle.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; font-weight: 600; }
+    .pb-bulk-bar {
+      display: flex; align-items: center; gap: 12px;
+      background: #f8faf8; border: 1px solid #e0e8de; border-radius: 8px;
+      padding: 10px 14px; margin-top: 8px; font-size: 14px;
+    }
+    .pb-compose-btn {
+      background: #f0f7ee; border: 1px solid #b6d9b0; color: #2d5a27;
+      border-radius: 8px; cursor: pointer; font-weight: 600;
+    }
+    .pb-compose-btn:hover { background: #e0f0db; }
   </style>
 </head>
 <body>
@@ -768,7 +804,15 @@ let excludedClientData = []; // 取引区分除外レコード
 let noEmailClientData = [];  // メールアドレス未登録レコード
 let clientChannel = 'all';
 let clientStage = 'all';
-let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded' | 'no-email'
+let activeTab = 'today'; // 'today' | 'new-leads' | 'excluded' | 'no-email' | 'phonebook'
+
+// === 電話帳タブ用状態 ===
+let phonebookData = [];
+let phonebookSortMode = 'lastContact-desc';
+let phonebookSearchQuery = '';
+let phonebookBulkMode = false;
+let phonebookSelected = new Set();
+let _pbConfirmState = null; // 確認モーダル用の一時データ
 
 // === Phase3 タブ用ユーティリティ ===
 function daysSince(dateStr) {
@@ -1701,6 +1745,9 @@ function renderWithTabs() {
       <button class="phase3-tab-btn ${activeTab==='no-email'?'active':''}" data-tab="no-email" onclick="switchTab('no-email')">
         メアドなし <span class="tab-badge">${noEmailCnt}</span>
       </button>
+      <button class="phase3-tab-btn ${activeTab==='phonebook'?'active':''}" data-tab="phonebook" onclick="switchTab('phonebook')">
+        📒 電話帳
+      </button>
     </div>
     <div id="tab-content"></div>
   `;
@@ -1745,6 +1792,14 @@ function emptyHtml(defaultMsg) {
 function renderTabContent() {
   const el = document.getElementById('tab-content');
   if (!el) return;
+
+  // 電話帳タブは独自レンダラーへ
+  if (activeTab === 'phonebook') {
+    phonebookData = getPhonebookData();
+    renderPhonebookContent();
+    return;
+  }
+
   const data = clientSearchQuery ? applySearch(clientData) : getTabData(activeTab);
 
   if (activeTab === 'excluded') {
@@ -2095,10 +2150,587 @@ async function initClients() {
   }
 }
 
+// ============================================================
+// === 電話帳タブ
+// ============================================================
+
+// --- ステージ遷移マップ（UIラベル → Notionに書き込むDB値） ---
+// value: null = 変更なし（APIに newStage を送らない）
+const PB_STAGE_TRANSITIONS = {
+  '取引先':      [{ label: '変更なし', value: null }, { label: 'フォロー1回目に戻す', value: 'フォロー1回目' }, { label: 'ナーチャリングに移す', value: 'ナーチャリング' }],
+  'ナーチャリング':[{ label: '変更なし', value: null }, { label: 'フォロー1回目に昇格', value: 'フォロー1回目' }, { label: '取引先に変更', value: '取引先' }],
+  'フォロー1回目':[{ label: '変更なし', value: null }, { label: 'フォロー2回目へ', value: 'フォロー2回目' }, { label: '取引先に変更', value: '取引先' }, { label: 'ナーチャリングに移す', value: 'ナーチャリング' }],
+  'フォロー2回目':[{ label: '変更なし', value: null }, { label: 'フォロー3回目へ', value: 'フォロー3回目' }, { label: '取引先に変更', value: '取引先' }, { label: 'ナーチャリングに移す', value: 'ナーチャリング' }],
+  'フォロー3回目':[{ label: '変更なし', value: null }, { label: 'フォロー4回目へ', value: 'フォロー4回目' }, { label: '取引先に変更', value: '取引先' }, { label: 'ナーチャリングに移す', value: 'ナーチャリング' }],
+  'フォロー4回目':[{ label: '変更なし', value: null }, { label: '取引先に変更', value: '取引先' }, { label: 'ナーチャリングに移す', value: 'ナーチャリング' }],
+  '未フォロー':  [{ label: '変更なし', value: null }, { label: 'フォロー1回目に設定', value: 'フォロー1回目' }],
+};
+
+// ステージ（DB値）に応じた次回フォロー日アシスト計算
+function pbSuggestNextFollowDate(newStageValue, currentStage, sentDate) {
+  const effectiveStage = (newStageValue !== null && newStageValue !== undefined) ? newStageValue : currentStage;
+  const base = sentDate || today();
+  if (effectiveStage === '取引先')       return addDays(base, 180);
+  if (effectiveStage === 'ナーチャリング') return addDays(base, 90);
+  return addDays(base, 7); // フォロー系・未フォロー
+}
+
+// --- データ取得：ソート＋検索フィルタ ---
+function getPhonebookData() {
+  let data = [...clientData]; // clientData = email有り・除外なし
+
+  // 検索フィルタ
+  const q = phonebookSearchQuery.trim().toLowerCase();
+  if (q) {
+    data = data.filter(item =>
+      item.name.toLowerCase().includes(q) ||
+      item.contact.toLowerCase().includes(q) ||
+      item.email.toLowerCase().includes(q)
+    );
+  }
+
+  // ソート
+  if (phonebookSortMode === 'lastContact-desc') {
+    data.sort((a, b) => {
+      if (!a.lastFollowDate && !b.lastFollowDate) return 0;
+      if (!a.lastFollowDate) return 1;
+      if (!b.lastFollowDate) return -1;
+      return b.lastFollowDate.localeCompare(a.lastFollowDate);
+    });
+  } else if (phonebookSortMode === 'lastContact-asc') {
+    data.sort((a, b) => {
+      if (!a.lastFollowDate && !b.lastFollowDate) return 0;
+      if (!a.lastFollowDate) return 1;
+      if (!b.lastFollowDate) return -1;
+      return a.lastFollowDate.localeCompare(b.lastFollowDate);
+    });
+  } else if (phonebookSortMode === 'kana') {
+    data.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  } else if (phonebookSortMode === 'created-desc') {
+    data.sort((a, b) => {
+      if (!a.createdTime && !b.createdTime) return 0;
+      if (!a.createdTime) return 1;
+      if (!b.createdTime) return -1;
+      return b.createdTime.localeCompare(a.createdTime);
+    });
+  }
+
+  return data;
+}
+
+// --- 電話帳タブ全体レンダリング ---
+function renderPhonebookContent() {
+  const el = document.getElementById('tab-content');
+  if (!el) return;
+
+  const sortOptions = [
+    { value: 'lastContact-desc', label: '前回フォロー：新しい順' },
+    { value: 'lastContact-asc',  label: '前回フォロー：古い順' },
+    { value: 'kana',             label: '50音順' },
+    { value: 'created-desc',     label: '登録日：新しい順' },
+  ];
+  const sortHtml = sortOptions.map(o =>
+    `<button class="pb-sort-btn ${phonebookSortMode === o.value ? 'active' : ''}" onclick="setPbSort('${o.value}')">${o.label}</button>`
+  ).join('');
+
+  const bulkBtnHtml = `<button class="pb-bulk-toggle ${phonebookBulkMode ? 'active' : ''}" onclick="togglePbBulkMode()">
+    ${phonebookBulkMode ? '✅ 一斉送信モード ON' : '📢 一斉送信モード'}
+  </button>`;
+
+  const bulkSendBar = phonebookBulkMode ? `
+    <div class="pb-bulk-bar">
+      <span>選択中：<strong id="pbSelectedCount">0</strong>件</span>
+      <button onclick="openPbBulkModal()" class="btn btn-send-html" style="padding:8px 18px;font-size:14px;" id="pbBulkSendBtn" disabled>📨 一斉送信</button>
+      <button onclick="clearPbBulkSelection()" style="background:none;border:1px solid #ccc;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;color:#555;">選択解除</button>
+    </div>
+  ` : '';
+
+  const emptyMsg = phonebookSearchQuery
+    ? `「${escapeHtml(phonebookSearchQuery)}」に一致する取引先はありません`
+    : '電話帳に表示できる取引先がありません';
+  const cardsHtml = phonebookData.length === 0
+    ? `<div class="empty"><h2>${emptyMsg}</h2></div>`
+    : phonebookData.map((item, pbIdx) => renderPhonebookCard(item, pbIdx)).join('');
+
+  el.innerHTML = `
+    <div class="pb-toolbar">
+      <div class="pb-search-row">
+        <input class="pb-search-input" type="text" placeholder="🔍 企業名・担当者名・メアドで検索"
+          value="${escapeAttr(phonebookSearchQuery)}"
+          oninput="setPbSearch(this.value)" />
+        ${phonebookSearchQuery ? `<button onclick="setPbSearch('')" class="pb-search-clear">✕</button>` : ''}
+      </div>
+      <div class="pb-sort-row">${sortHtml}${bulkBtnHtml}</div>
+      ${bulkSendBar}
+    </div>
+    <div id="pb-card-list">${cardsHtml}</div>
+  `;
+
+  updatePbBulkBar();
+}
+
+// --- 電話帳カード ---
+function renderPhonebookCard(item, pbIdx) {
+  const stageColors = {
+    '取引先':      { bg: '#dcfce7', fg: '#15803d' },
+    'ナーチャリング':{ bg: '#dbeafe', fg: '#2563eb' },
+    'フォロー1回目':{ bg: '#fef3c7', fg: '#d97706' },
+    'フォロー2回目':{ bg: '#fef3c7', fg: '#d97706' },
+    'フォロー3回目':{ bg: '#fef3c7', fg: '#d97706' },
+    'フォロー4回目':{ bg: '#fee2e2', fg: '#dc2626' },
+    '未フォロー':  { bg: '#f3f4f6', fg: '#6b7280' },
+  };
+  const sc = stageColors[item.stage] || { bg: '#f3f4f6', fg: '#6b7280' };
+  const stageBadge = `<span class="badge" style="background:${sc.bg};color:${sc.fg};">${escapeHtml(item.stage || '未設定')}</span>`;
+  const lastFollowHtml = item.lastFollowDate
+    ? `<span style="font-size:12px;color:#888;">📅 前回：${item.lastFollowDate}</span>`
+    : `<span style="font-size:12px;color:#aaa;">📅 前回：なし</span>`;
+  const checkboxHtml = phonebookBulkMode
+    ? `<input type="checkbox" class="pb-card-check" id="pbcheck-${pbIdx}"
+        onchange="pbBulkToggleCheck(${pbIdx}, this.checked)"
+        style="width:18px;height:18px;cursor:pointer;accent-color:#2d5a27;flex-shrink:0;">`
+    : '';
+
+  const templateHtml = templates.length > 0
+    ? templates.map(t =>
+        `<span class="attach-chip" data-template-text="${escapeAttr(t.text)}"
+          onclick="this.classList.toggle('selected');pbUpdateTemplateContext(${pbIdx})"
+          title="${escapeAttr(t.text.slice(0, 100))}">📝 ${escapeHtml(t.name)}</span>`
+      ).join('')
+    : '<span style="font-size:12px;color:#aaa;">定型文未登録</span>';
+
+  return `
+    <div class="card" id="pb-card-${pbIdx}" style="margin-bottom:10px;">
+      <div class="card-header" style="padding:12px 16px;">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+          ${checkboxHtml}
+          <div style="min-width:0;">
+            <div class="card-title" style="font-size:15px;margin-bottom:4px;">${escapeHtml(item.name)}</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              ${item.contact ? `<span style="font-size:12px;color:#555;">担当：${escapeHtml(item.contact)}様</span>` : ''}
+              ${stageBadge}
+              ${lastFollowHtml}
+            </div>
+          </div>
+        </div>
+        <button onclick="togglePhonebookCompose(${pbIdx})"
+          class="btn pb-compose-btn" id="pb-compose-btn-${pbIdx}"
+          style="flex-shrink:0;padding:8px 14px;font-size:13px;">
+          ✉️ メール作成
+        </button>
+      </div>
+      <div id="pb-compose-${pbIdx}" style="display:none;border-top:1px solid #eee;padding:14px 16px;">
+        <div style="font-size:12px;color:#888;margin-bottom:10px;">📧 宛先：${escapeHtml(item.email)}</div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px;">定型文</label>
+          <div id="pb-template-panel-${pbIdx}" class="attach-list" style="margin-bottom:6px;">${templateHtml}</div>
+          <textarea id="pb-body-${pbIdx}"
+            style="width:100%;box-sizing:border-box;font-size:12px;background:#fffef8;border:1px solid #e8e4d0;border-radius:6px;padding:8px 10px;min-height:80px;resize:vertical;font-family:inherit;line-height:1.5;"
+            placeholder="定型文を選択、または直接入力してください（{{facility_name}}・{{name}} 変数使用可）"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="openPhonebookConfirmModal(${pbIdx})" class="btn btn-gmail" style="flex:1;padding:10px;font-size:14px;">📧 送信確認へ</button>
+          <button onclick="togglePhonebookCompose(${pbIdx})"
+            style="background:none;border:1px solid #ccc;border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer;color:#666;">✕ 閉じる</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function togglePhonebookCompose(pbIdx) {
+  const compose = document.getElementById(`pb-compose-${pbIdx}`);
+  const btn = document.getElementById(`pb-compose-btn-${pbIdx}`);
+  if (!compose) return;
+  const isOpen = compose.style.display !== 'none';
+  compose.style.display = isOpen ? 'none' : 'block';
+  if (btn) btn.textContent = isOpen ? '✉️ メール作成' : '✕ 閉じる';
+}
+
+function pbUpdateTemplateContext(pbIdx) {
+  const panel = document.getElementById(`pb-template-panel-${pbIdx}`);
+  const textarea = document.getElementById(`pb-body-${pbIdx}`);
+  if (!panel || !textarea) return;
+  const selected = Array.from(panel.querySelectorAll('.attach-chip.selected'));
+  if (selected.length > 0) {
+    textarea.value = selected.map(c => c.dataset.templateText || '').join('\n\n');
+  }
+}
+
+// --- 確認モーダルを開く ---
+function openPhonebookConfirmModal(pbIdx) {
+  const item = phonebookData[pbIdx];
+  if (!item) return;
+
+  const bodyText = document.getElementById(`pb-body-${pbIdx}`)?.value?.trim() || '';
+  if (!bodyText) { alert('メール本文を入力または定型文を選択してください'); return; }
+
+  const senderSel = document.getElementById('clientSenderSelect');
+  const senderId = senderSel?.value || 'company';
+  const vars = { facility_name: item.name || '', name: item.contact || '' };
+  const substituted = bodyText
+    .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+    .replace(/\{\{name\}\}/g, vars.name);
+  const firstLine = bodyText.split('\n')[0].replace(/^#+\s*/, '').trim();
+  const subject = (firstLine || `${item.name} 様へのご連絡`)
+    .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+    .replace(/\{\{name\}\}/g, vars.name);
+  const bodyHtml = textToHtml(substituted);
+  const htmlEmail = buildHtmlEmailClient(bodyHtml, null, senderId);
+
+  _pbConfirmState = { pbIdx, item, templateText: bodyText, subject, bodyHtml: htmlEmail, senderId };
+
+  const currentStage = item.stage || '未フォロー';
+  const transitions = PB_STAGE_TRANSITIONS[currentStage] || [{ label: '変更なし', value: null }];
+  const suggestedDate = pbSuggestNextFollowDate(null, currentStage, today());
+
+  const stageColors = {
+    '取引先':      { bg: '#dcfce7', fg: '#15803d' }, 'ナーチャリング':{ bg: '#dbeafe', fg: '#2563eb' },
+    'フォロー1回目':{ bg: '#fef3c7', fg: '#d97706' }, 'フォロー2回目':{ bg: '#fef3c7', fg: '#d97706' },
+    'フォロー3回目':{ bg: '#fef3c7', fg: '#d97706' }, 'フォロー4回目':{ bg: '#fee2e2', fg: '#dc2626' },
+    '未フォロー':  { bg: '#f3f4f6', fg: '#6b7280' },
+  };
+  const sc = stageColors[currentStage] || { bg: '#f3f4f6', fg: '#6b7280' };
+
+  // ラジオ：value属性には実際のDB値（または '__none__' で変更なし）を使用
+  const radioHtml = transitions.map((t, i) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:14px;">
+      <input type="radio" name="pbStageRadio"
+        value="${t.value === null ? '__none__' : escapeAttr(t.value)}"
+        ${i === 0 ? 'checked' : ''}
+        onchange="pbOnStageChange()"
+        style="accent-color:#2d5a27;">
+      ${escapeHtml(t.label)}
+    </label>
+  `).join('');
+
+  document.getElementById('pbConfirmContent').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 style="margin:0;font-size:17px;">📧 送信確認</h2>
+      <button onclick="closePhonebookConfirmModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666;line-height:1;padding:0 4px;">✕</button>
+    </div>
+
+    <div style="background:#f8faf8;border:1px solid #e0e8de;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:14px;line-height:1.7;">
+      <div><strong>${escapeHtml(item.name)}</strong>${item.contact ? `　担当：${escapeHtml(item.contact)}様` : ''}</div>
+      <div style="color:#555;font-size:13px;">📧 ${escapeHtml(item.email)}</div>
+      <div style="color:#444;font-size:13px;">件名：<em>${escapeHtml(subject)}</em></div>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;color:#888;margin-bottom:6px;">現在のステージ</div>
+      <span class="badge" style="background:${sc.bg};color:${sc.fg};font-size:13px;padding:4px 12px;">${escapeHtml(currentStage)}</span>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;color:#888;font-weight:600;margin-bottom:6px;">送信後のステージをどうしますか？</div>
+      <div id="pbStageRadioGroup">${radioHtml}</div>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <div style="font-size:12px;color:#888;font-weight:600;margin-bottom:6px;">次回フォロー日</div>
+      <input type="date" id="pbNextFollowDateInput" value="${suggestedDate}"
+        style="border:1px solid #e0e8de;border-radius:6px;padding:8px 10px;font-size:14px;width:100%;box-sizing:border-box;">
+      <div id="pbNextFollowSuggest" style="font-size:11px;color:#888;margin-top:4px;"></div>
+    </div>
+
+    <div style="display:flex;gap:10px;">
+      <button onclick="closePhonebookConfirmModal()"
+        style="flex:1;background:none;border:1px solid #ccc;border-radius:8px;padding:11px;font-size:14px;cursor:pointer;color:#555;">キャンセル</button>
+      <button onclick="confirmAndSendPhonebook()" id="pbConfirmSendBtn"
+        class="btn btn-send-html" style="flex:2;justify-content:center;font-size:15px;padding:11px;">送信して更新</button>
+    </div>
+  `;
+
+  document.getElementById('pbConfirmModal').classList.add('show');
+  pbOnStageChange(); // 初期アシスト日付を表示
+}
+
+// ステージラジオ変更時 → 次回フォロー日アシストを更新
+function pbOnStageChange() {
+  if (!_pbConfirmState) return;
+  const currentStage = _pbConfirmState.item.stage || '未フォロー';
+  const radio = document.querySelector('input[name="pbStageRadio"]:checked');
+  if (!radio) return;
+
+  const rawValue = radio.value;
+  const newStageValue = rawValue === '__none__' ? null : rawValue;
+  const effectiveStage = newStageValue !== null ? newStageValue : currentStage;
+  const suggestedDate = pbSuggestNextFollowDate(newStageValue, currentStage, today());
+
+  const dateInput = document.getElementById('pbNextFollowDateInput');
+  if (dateInput) dateInput.value = suggestedDate;
+
+  const suggestEl = document.getElementById('pbNextFollowSuggest');
+  if (suggestEl) {
+    const hints = { '取引先': '自動計算：送信日 +180日', 'ナーチャリング': '自動計算：送信日 +90日' };
+    suggestEl.textContent = '📌 ' + (hints[effectiveStage] || '自動計算：送信日 +7日');
+  }
+}
+
+function closePhonebookConfirmModal() {
+  document.getElementById('pbConfirmModal').classList.remove('show');
+  _pbConfirmState = null;
+}
+
+// 「送信して更新」実行
+async function confirmAndSendPhonebook() {
+  if (!_pbConfirmState) return;
+  const { pbIdx, item, subject, bodyHtml, senderId } = _pbConfirmState;
+
+  const radio = document.querySelector('input[name="pbStageRadio"]:checked');
+  const rawValue = radio ? radio.value : '__none__';
+  // '__none__' = 変更なし（null を API に渡す）、それ以外 = 実際のDB値
+  const newStage = rawValue === '__none__' ? null : rawValue;
+
+  const nextFollowUpDate = document.getElementById('pbNextFollowDateInput')?.value || addDays(today(), 7);
+
+  const btn = document.getElementById('pbConfirmSendBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
+
+  try {
+    const senderAcct = senderAccounts.find(s => s.id === senderId) || senderAccounts[0] || {};
+
+    // 1. Gmail 下書き作成
+    const draftRes = await fetch('/api/create-gmail-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: item.email, subject, htmlBody: bodyHtml, senderId,
+        clientId: item.id, companyName: item.name || '', contactName: item.contact || '',
+      }),
+    });
+    const draftData = await draftRes.json();
+
+    if (draftData.authUrl) {
+      alert('Gmail認証が必要です。このPCで認証してから再試行してください。\n' + draftData.authUrl);
+      if (btn) { btn.disabled = false; btn.textContent = '送信して更新'; }
+      return;
+    }
+    if (!draftData.ok) throw new Error(draftData.error || '下書き作成失敗');
+
+    // 2. Notion 記録（newStage・nextFollowUpDate・送信種別=個別送信）
+    const templateChips = Array.from(document.querySelectorAll(`#pb-template-panel-${pbIdx} .attach-chip.selected`))
+      .map(c => c.textContent.replace(/^📝\s*/, '').trim()).join('、');
+
+    const notionRes = await fetch('/api/record-email-sent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: item.id, clientName: item.name, subject, bodyHtml, sentDate: today(),
+        senderEmail: senderAcct.email || '', contactEmail: item.email || '',
+        templateNames: templateChips,
+        newStage,           // null = 変更なし、文字列 = DB値
+        nextFollowUpDate,   // コンタクト履歴の次回フォロー日（date型）に書き込む
+        sendType: '個別送信',
+      }),
+    });
+    const notionData = await notionRes.json();
+    if (notionData.warnings && notionData.warnings.length > 0) {
+      console.warn('phonebook Notion warnings:', notionData.warnings);
+    }
+
+    // 3. カードに結果バナーを表示
+    const card = document.getElementById(`pb-card-${pbIdx}`);
+    if (card) {
+      const resultBanner = document.createElement('div');
+      resultBanner.style.cssText = 'padding:10px 16px;background:#f0f7ee;border-top:2px solid #5a9e4b;font-size:13px;color:#2d5a27;line-height:1.8;';
+      const draftLink = draftData.draftUrl
+        ? `　<a href="${draftData.draftUrl}" target="_blank" style="color:#2563eb;font-weight:600;">📨 Gmail下書きを開く →</a>`
+        : '';
+      const stageNote = newStage ? `　ステージ → <strong>${escapeHtml(newStage)}</strong>` : '';
+      resultBanner.innerHTML = `✅ 記録完了${stageNote}${draftLink}`;
+      const compose = document.getElementById(`pb-compose-${pbIdx}`);
+      if (compose) compose.style.display = 'none';
+      const composeBtn = document.getElementById(`pb-compose-btn-${pbIdx}`);
+      if (composeBtn) composeBtn.style.display = 'none';
+      card.appendChild(resultBanner);
+    }
+
+    closePhonebookConfirmModal();
+  } catch (err) {
+    alert('エラー: ' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = '送信して更新'; }
+  }
+}
+
+// === 電話帳ツールバー操作 ===
+function setPbSort(mode) {
+  phonebookSortMode = mode;
+  phonebookData = getPhonebookData();
+  renderPhonebookContent();
+}
+
+function setPbSearch(query) {
+  phonebookSearchQuery = query;
+  phonebookData = getPhonebookData();
+  renderPhonebookContent();
+}
+
+function togglePbBulkMode() {
+  phonebookBulkMode = !phonebookBulkMode;
+  phonebookSelected = new Set();
+  phonebookData = getPhonebookData();
+  renderPhonebookContent();
+}
+
+// === 一斉送信 ===
+function pbBulkToggleCheck(pbIdx, checked) {
+  if (checked) phonebookSelected.add(pbIdx);
+  else         phonebookSelected.delete(pbIdx);
+  updatePbBulkBar();
+}
+
+function updatePbBulkBar() {
+  const countEl = document.getElementById('pbSelectedCount');
+  const sendBtn = document.getElementById('pbBulkSendBtn');
+  if (countEl) countEl.textContent = phonebookSelected.size;
+  if (sendBtn) sendBtn.disabled = phonebookSelected.size === 0;
+}
+
+function clearPbBulkSelection() {
+  phonebookSelected = new Set();
+  document.querySelectorAll('.pb-card-check').forEach(cb => cb.checked = false);
+  updatePbBulkBar();
+}
+
+function openPbBulkModal() {
+  if (phonebookSelected.size === 0) return;
+  const selectedItems = [...phonebookSelected].map(pbIdx => phonebookData[pbIdx]).filter(Boolean);
+  const listHtml = selectedItems.map(item =>
+    `<li style="font-size:13px;padding:3px 0;">${escapeHtml(item.name)}${item.contact ? `（${escapeHtml(item.contact)}）` : ''}</li>`
+  ).join('');
+
+  const templateHtml = templates.length > 0
+    ? templates.map(t =>
+        `<span class="attach-chip" data-template-text="${escapeAttr(t.text)}"
+          onclick="this.classList.toggle('selected');pbBulkUpdateTemplate()"
+          title="${escapeAttr(t.text.slice(0, 100))}">📝 ${escapeHtml(t.name)}</span>`
+      ).join('')
+    : '<span style="font-size:12px;color:#aaa;">定型文未登録</span>';
+
+  document.getElementById('pbBulkContent').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h2 style="margin:0;font-size:17px;">📢 一斉送信（${selectedItems.length}件）</h2>
+      <button onclick="document.getElementById('pbBulkModal').classList.remove('show')"
+        style="background:none;border:none;font-size:20px;cursor:pointer;color:#666;">✕</button>
+    </div>
+    <details style="margin-bottom:12px;font-size:13px;color:#555;">
+      <summary style="cursor:pointer;">送信先一覧を確認（${selectedItems.length}件）</summary>
+      <ul style="margin:6px 0 0 16px;padding:0;">${listHtml}</ul>
+    </details>
+    <div style="background:#fffbea;border:1px solid #f0d080;border-radius:6px;padding:8px 12px;font-size:12px;color:#7a5f00;margin-bottom:14px;">
+      ⚠️ 一斉送信ではステージ・次回フォロー日は変更されません。コンタクト履歴に「一斉送信」として記録されます。
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px;">共通メール本文</label>
+      <div id="pb-bulk-template-panel" class="attach-list" style="margin-bottom:6px;">${templateHtml}</div>
+      <textarea id="pbBulkBody"
+        style="width:100%;box-sizing:border-box;font-size:12px;background:#fffef8;border:1px solid #e8e4d0;border-radius:6px;padding:8px 10px;min-height:100px;resize:vertical;font-family:inherit;line-height:1.5;"
+        placeholder="全員に送る本文を入力（{{name}}・{{facility_name}} 変数使用可）"></textarea>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="document.getElementById('pbBulkModal').classList.remove('show')"
+        style="flex:1;background:none;border:1px solid #ccc;border-radius:8px;padding:11px;font-size:14px;cursor:pointer;color:#555;">キャンセル</button>
+      <button onclick="sendPhonebookBulk()" id="pbBulkExecBtn"
+        class="btn btn-send-html" style="flex:2;justify-content:center;font-size:15px;padding:11px;">📨 一斉送信する</button>
+    </div>
+    <div id="pbBulkProgress" style="margin-top:12px;font-size:13px;color:#555;display:none;"></div>
+  `;
+  document.getElementById('pbBulkModal').classList.add('show');
+}
+
+function pbBulkUpdateTemplate() {
+  const panel = document.getElementById('pb-bulk-template-panel');
+  const textarea = document.getElementById('pbBulkBody');
+  if (!panel || !textarea) return;
+  const selected = Array.from(panel.querySelectorAll('.attach-chip.selected'));
+  if (selected.length > 0) textarea.value = selected.map(c => c.dataset.templateText || '').join('\n\n');
+}
+
+async function sendPhonebookBulk() {
+  const bodyText = document.getElementById('pbBulkBody')?.value?.trim() || '';
+  if (!bodyText) { alert('本文を入力してください'); return; }
+
+  const selectedItems = [...phonebookSelected].map(pbIdx => phonebookData[pbIdx]).filter(Boolean);
+  if (selectedItems.length === 0) return;
+
+  const btn = document.getElementById('pbBulkExecBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
+  const progressEl = document.getElementById('pbBulkProgress');
+  if (progressEl) progressEl.style.display = 'block';
+
+  const senderSel = document.getElementById('clientSenderSelect');
+  const senderId = senderSel?.value || 'company';
+  const senderAcct = senderAccounts.find(s => s.id === senderId) || senderAccounts[0] || {};
+  const sentDate = today();
+  let successCount = 0, errorCount = 0;
+
+  for (const item of selectedItems) {
+    try {
+      const vars = { facility_name: item.name || '', name: item.contact || '' };
+      const substituted = bodyText
+        .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+        .replace(/\{\{name\}\}/g, vars.name);
+      const firstLine = bodyText.split('\n')[0].replace(/^#+\s*/, '').trim();
+      const subject = (firstLine || `${item.name} 様へのご連絡`)
+        .replace(/\{\{facility_name\}\}/g, vars.facility_name)
+        .replace(/\{\{name\}\}/g, vars.name);
+      const bodyHtml = textToHtml(substituted);
+      const htmlEmail = buildHtmlEmailClient(bodyHtml, null, senderId);
+
+      if (progressEl) progressEl.textContent = `送信中... ${successCount + errorCount + 1}/${selectedItems.length}件 — ${item.name}`;
+
+      // Gmail 下書き作成
+      const draftRes = await fetch('/api/create-gmail-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: item.email, subject, htmlBody: htmlEmail, senderId,
+          clientId: item.id, companyName: item.name || '', contactName: item.contact || '' }),
+      });
+      const draftData = await draftRes.json();
+      if (!draftData.ok) throw new Error(draftData.error || '下書き作成失敗');
+
+      // Notion 記録（ステージ変更なし・sendType=一斉送信）
+      await fetch('/api/record-email-sent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: item.id, clientName: item.name, subject, bodyHtml: htmlEmail,
+          sentDate, senderEmail: senderAcct.email || '', contactEmail: item.email || '',
+          sendType: '一斉送信', // newStage は渡さない = 変更なし
+        }),
+      });
+      successCount++;
+    } catch (err) {
+      console.error('bulk send error for', item.name, err);
+      errorCount++;
+    }
+  }
+
+  if (progressEl) {
+    const errNote = errorCount > 0 ? `　⚠️ ${errorCount}件失敗` : '';
+    progressEl.innerHTML = `<strong>✅ ${successCount}件完了${errNote}</strong><br>Gmailの下書きフォルダを確認し、各メールを送信してください。`;
+  }
+  if (btn) { btn.textContent = '完了'; }
+}
+
 // === 起動 ===
 initClients();
 </script>
 
+<!-- 電話帳：個別送信確認モーダル -->
+<div class="modal-overlay" id="pbConfirmModal" onclick="if(event.target===this)closePhonebookConfirmModal()">
+  <div class="modal" style="max-width:480px;">
+    <div id="pbConfirmContent"></div>
+  </div>
+</div>
+
+<!-- 電話帳：一斉送信モーダル -->
+<div class="modal-overlay" id="pbBulkModal" onclick="if(event.target===this)document.getElementById('pbBulkModal').classList.remove('show')">
+  <div class="modal" style="max-width:520px;">
+    <div id="pbBulkContent"></div>
+  </div>
+</div>
 
 </body>
 </html>

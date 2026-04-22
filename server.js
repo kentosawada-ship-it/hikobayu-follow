@@ -329,11 +329,14 @@ function saveTemplates(data) {
 // Gmail送信成功後に呼ぶ。Notion失敗は warnings で返し、送信自体は成功扱い。
 app.post('/api/record-email-sent', async (req, res) => {
   const { clientId, clientName, bodyHtml, subject, sentDate,
-          senderEmail, contactEmail, templateNames, attachNames } = req.body;
+          senderEmail, contactEmail, templateNames, attachNames,
+          newStage, nextFollowUpDate, sendType } = req.body;
 
   const plainBody = stripHtml(bodyHtml).substring(0, 200);
-  const nextFollowDate = addDaysToDateStr(sentDate || getTodayJST(), 7);
+  // nextFollowUpDate が指定されていればそれを使い、なければ送信日+7日
+  const contactNextFollowDate = nextFollowUpDate || addDaysToDateStr(sentDate || getTodayJST(), 7);
   const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+  const resolvedSendType = sendType || '個別送信'; // 未指定時のデフォルト（後方互換）
   const warnings = [];
 
   // 1. コンタクト履歴に新規ページ作成
@@ -352,10 +355,10 @@ app.post('/api/record-email-sent', async (req, res) => {
       'タイトル':      { title:     [{ text: { content: title } }] },
       '取引先':        { relation:  [{ id: clientId }] },
       '接触日':        { date:      { start: sentDate || getTodayJST() } },
-      '接触種別':      { select:    { name: 'メール送信' } },
       'レスポンス有無':{ select:    { name: 'レスポンスなし' } },
-      '内容メモ':      { rich_text: [{ text: { content: memoLines.join('\n').slice(0, 2000) } }] },
-      '次回フォロー日':{ date:      { start: nextFollowDate } },
+      'レスポンス内容':{ rich_text: [{ text: { content: memoLines.join('\n').slice(0, 2000) } }] },
+      '次回フォロー日':{ date:      { start: contactNextFollowDate } },
+      '送信種別':      { select:    { name: resolvedSendType } },
     };
 
     const r = await fetch('https://api.notion.com/v1/pages', {
@@ -374,8 +377,21 @@ app.post('/api/record-email-sent', async (req, res) => {
     warnings.push({ step: 'contact_history', error: err.message });
   }
 
-  // 2. 取引先マスター更新（前回フォロー日・次回フォロー日・前回の対応内容）
+  // 2. 取引先マスター更新（前回フォロー日・前回の対応内容・ステージ）
+  // ※ 取引先マスターの「次回フォロー日」はFORMULA型のため直接書き込み不可。
+  //    コンタクト履歴の「次回フォロー日」(date型) 経由で間接的に反映される。
   try {
+    const clientProps = {
+      '前回フォロー日': { date: { start: sentDate || getTodayJST() } },
+    };
+    if (plainBody) {
+      clientProps['前回の対応内容'] = { rich_text: [{ text: { content: plainBody } }] };
+    }
+    // ステージ変更が指定されている場合のみ更新
+    if (newStage) {
+      clientProps['ステージ'] = { select: { name: newStage } };
+    }
+
     const r = await fetch(`https://api.notion.com/v1/pages/${clientId}`, {
       method: 'PATCH',
       headers: {
@@ -383,13 +399,7 @@ app.post('/api/record-email-sent', async (req, res) => {
         'Notion-Version': '2022-06-28',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        properties: {
-          '前回フォロー日':   { date:      { start: sentDate || getTodayJST() } },
-          '次回フォロー日':   { date:      { start: nextFollowDate } },
-          '前回の対応内容':   { rich_text: [{ text: { content: plainBody } }] },
-        },
-      }),
+      body: JSON.stringify({ properties: clientProps }),
     });
     const d = await r.json();
     if (d.object === 'error') throw new Error(d.message);
@@ -616,7 +626,6 @@ app.post('/api/log-email-sent', async (req, res) => {
     const properties = {
       'タイトル': { title: [{ text: { content: `${contactDate} ${clientName} メール送信` } }] },
       '接触日': { date: { start: contactDate } },
-      '接触種別': { select: { name: 'メール送信' } },
       'レスポンス有無': { select: { name: '未確認' } },
     };
 
@@ -846,9 +855,8 @@ app.post('/api/contacts/create', async (req, res) => {
     const properties = {
       'タイトル': { title: [{ text: { content: `${contactDate} ${clientName} メール送信` } }] },
       '接触日': { date: { start: contactDate } },
-      '接触種別': { select: { name: 'メール送信' } },
       'レスポンス有無': { select: { name: '未確認' } },
-      '内容メモ': { rich_text: [{ text: { content: memo.slice(0, 2000) } }] },
+      'レスポンス内容': { rich_text: [{ text: { content: memo.slice(0, 2000) } }] },
     };
 
     if (clientId) {
@@ -976,11 +984,10 @@ app.get('/api/contacts/latest/:clientId', async (req, res) => {
 
     const page = results[0];
     const props = page.properties;
-    const memo = props['内容メモ']?.rich_text?.[0]?.plain_text || null;
+    const memo = props['レスポンス内容']?.rich_text?.[0]?.plain_text || null;
     const date = props['接触日']?.date?.start || null;
-    const type = props['接触種別']?.select?.name || null;
 
-    res.json({ memo, date, type });
+    res.json({ memo, date });
   } catch (err) {
     console.error('Contacts latest error:', err);
     res.status(500).json({ error: err.message });
@@ -1240,10 +1247,9 @@ async function syncGmailInbox() {
               properties: {
                 'タイトル':      { title:     [{ text: { content: title } }] },
                 '接触日':        { date:      { start: receivedDateStr } },
-                '接触種別':      { select:    { name: 'メール受信' } },
                 '取引先':        { relation:  [{ id: clientPageId }] },
                 'レスポンス有無':{ select:    { name: 'レスポンスあり' } },
-                '内容メモ':      { rich_text: [{ text: { content: `件名: ${subject}\n送信者: ${from}\nMessageID: ${messageId}` } }] },
+                'レスポンス内容':{ rich_text: [{ text: { content: `件名: ${subject}\n送信者: ${from}\nMessageID: ${messageId}` } }] },
               }
             })
           });
