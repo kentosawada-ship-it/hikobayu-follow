@@ -2340,7 +2340,8 @@ function pbSuggestNextFollowDate(newStageValue, currentStage, sentDate) {
 
 // --- データ取得：ソート＋検索フィルタ ---
 function getPhonebookData() {
-  let data = [...clientData]; // clientData = email有り・除外なし
+  // 母集団: 除外フラグなし全員（email有・なし両方。excludedClientDataは除く）
+  let data = [...clientData, ...noEmailClientData];
 
   // 検索フィルタ
   const q = phonebookSearchQuery.trim().toLowerCase();
@@ -2348,7 +2349,7 @@ function getPhonebookData() {
     data = data.filter(item =>
       item.name.toLowerCase().includes(q) ||
       item.contact.toLowerCase().includes(q) ||
-      item.email.toLowerCase().includes(q)
+      (item.email || '').toLowerCase().includes(q)
     );
   }
 
@@ -2489,16 +2490,29 @@ function renderPhonebookCard(item, pbIdx) {
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button onclick="openGeminiStrategy(${pbIdx})"
-            style="background:#f0f4ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap;"
-            title="Geminiでこの相手への返信戦略を練る">
-            🌀 戦略を練る
-          </button>
-          <button onclick="togglePhonebookCompose(${pbIdx})"
-            class="btn pb-compose-btn" id="pb-compose-btn-${pbIdx}"
-            style="padding:8px 14px;font-size:13px;">
-            ✉️ メール作成
-          </button>
+          ${item.email ? `
+            <button onclick="openGeminiStrategy(${pbIdx})"
+              style="background:#f0f4ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap;"
+              title="Geminiでこの相手への返信戦略を練る">
+              🌀 戦略を練る
+            </button>
+            <button onclick="togglePhonebookCompose(${pbIdx})"
+              class="btn pb-compose-btn" id="pb-compose-btn-${pbIdx}"
+              style="padding:8px 14px;font-size:13px;">
+              ✉️ メール作成
+            </button>
+          ` : `
+            <button disabled
+              style="background:#f3f4f6;border:1px solid #d1d5db;color:#9ca3af;border-radius:8px;padding:8px 12px;font-size:13px;cursor:not-allowed;font-weight:600;white-space:nowrap;"
+              title="アドレスが未登録です。Notionで登録してください">
+              🌀 戦略を練る
+            </button>
+            <button disabled
+              style="background:#f3f4f6;border:1px solid #d1d5db;color:#9ca3af;border-radius:8px;padding:8px 14px;font-size:13px;cursor:not-allowed;font-weight:600;"
+              title="アドレスが未登録です。Notionで登録してください">
+              ✉️ メール作成
+            </button>
+          `}
         </div>
       </div>
       <div id="pb-compose-${pbIdx}" style="display:none;border-top:1px solid #eee;padding:14px 16px;">
