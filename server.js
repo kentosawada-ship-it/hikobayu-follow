@@ -5,6 +5,20 @@ const path = require('path');
 const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
 const app = express();
+
+// --- CORS設定 ---
+const ALLOWED_ORIGINS = ['https://hikobayu.com', 'https://hikobayu.myshopify.com'];
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.static('.'));
 app.use('/icons', express.static(path.join(__dirname, 'public/icons')));
 app.use(express.json());
@@ -950,6 +964,159 @@ app.post('/api/notion/append-email/:pageId', async (req, res) => {
 });
 
 
+
+// ============================================================
+// 卸発注通知エンドポイント POST /api/wholesale-order
+// ============================================================
+
+// 簡易レート制限（同一IP：1分間に5回まで）
+const wholesaleRateMap = new Map();
+function checkWholesaleRateLimit(ip) {
+  const now = Date.now();
+  const window = 60 * 1000;
+  const limit = 5;
+  const entry = wholesaleRateMap.get(ip) || { count: 0, resetAt: now + window };
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + window;
+  }
+  entry.count++;
+  wholesaleRateMap.set(ip, entry);
+  return entry.count <= limit;
+}
+
+// XSSサニタイズ（メール本文に入る文字列用）
+function sanitizeText(str) {
+  return String(str || '').replace(/[<>"'&]/g, c => ({
+    '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '&': '&amp;'
+  })[c]);
+}
+
+// 卸発注メール本文を組み立て（プレーンテキスト）
+function buildWholesaleEmailBody(data) {
+  const { customerName, customerEmail, items, totalExcludingTax, note, orderedAt } = data;
+
+  const dateStr = (() => {
+    try {
+      const d = new Date(orderedAt);
+      const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return jst.toISOString().replace('T', ' ').substring(0, 16).replace(/-/g, '年').replace(' ', '月').replace(':', '時') + '分（JST）';
+    } catch { return orderedAt; }
+  })();
+
+  const itemLines = items.map(item =>
+    `・${sanitizeText(item.name)}　×${item.quantity}点　¥${Number(item.unitPrice).toLocaleString()}　小計：¥${Number(item.subtotal).toLocaleString()}`
+  );
+
+  return [
+    'HIKOBAYU 御中',
+    '',
+    '下記の通り発注いたします。',
+    '',
+    '────────────',
+    '【ご発注内容】',
+    ...itemLines,
+    '────────────',
+    `合計（税抜）：¥${Number(totalExcludingTax).toLocaleString()}`,
+    '',
+    '【お客様情報】',
+    `お名前：${sanitizeText(customerName)}`,
+    `メール：${sanitizeText(customerEmail)}`,
+    `発注日時：${dateStr}`,
+    '',
+    '【備考・ご要望】',
+    note ? sanitizeText(note) : 'なし',
+    '',
+    '──────────────',
+    '※ このメールはHIKOBAYU卸サイトから自動生成されました',
+  ].join('\n');
+}
+
+app.post('/api/wholesale-order', async (req, res) => {
+  // レート制限
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+  if (!checkWholesaleRateLimit(clientIp)) {
+    return res.status(429).json({ ok: false, error: 'rate_limited' });
+  }
+
+  const { customerName, customerEmail, items, totalExcludingTax, note, orderedAt } = req.body;
+
+  // 入力検証
+  if (!customerName || !customerEmail || !Array.isArray(items) || !totalExcludingTax || !orderedAt) {
+    return res.status(400).json({ ok: false, error: 'invalid_input', details: '必須項目が不足しています' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+    return res.status(400).json({ ok: false, error: 'invalid_input', details: 'メールアドレスの形式が不正です' });
+  }
+  if (items.length === 0 || items.length > 50) {
+    return res.status(400).json({ ok: false, error: 'invalid_input', details: '注文商品数が不正です' });
+  }
+  for (const item of items) {
+    if (!item.name || typeof item.quantity !== 'number' || item.quantity <= 0) {
+      return res.status(400).json({ ok: false, error: 'invalid_input', details: '商品データが不正です' });
+    }
+    const expectedSubtotal = Math.round(item.quantity * item.unitPrice);
+    if (Math.abs(expectedSubtotal - item.subtotal) > 1) {
+      return res.status(400).json({ ok: false, error: 'invalid_input', details: '小計の整合性エラー' });
+    }
+  }
+  const expectedTotal = items.reduce((sum, i) => sum + i.subtotal, 0);
+  if (Math.abs(expectedTotal - totalExcludingTax) > 1) {
+    return res.status(400).json({ ok: false, error: 'invalid_input', details: '合計金額の整合性エラー' });
+  }
+
+  // メール本文・件名
+  const now = new Date(orderedAt);
+  const dateLabel = (() => {
+    try {
+      return new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+    } catch { return new Date().toISOString().split('T')[0]; }
+  })();
+  const subject = `【卸発注】${sanitizeText(customerName)}様 - ${dateLabel}`;
+  const bodyText = buildWholesaleEmailBody(req.body);
+
+  // Gmail OAuth2 で info@hikobayu.com から送信
+  try {
+    const tokens = loadGmailTokens()['company'];
+    if (!tokens?.refresh_token) {
+      console.error('[wholesale-order] company アカウントのトークンなし');
+      return res.status(500).json({ ok: false, error: 'send_failed' });
+    }
+
+    const client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.OAUTH_REDIRECT_URL || 'http://localhost:3000/oauth2callback'
+    );
+    client.setCredentials(tokens);
+    client.on('tokens', (t) => saveGmailTokens('company', { ...tokens, ...t }));
+
+    const gmail = google.gmail({ version: 'v1', auth: client });
+
+    const mimeLines = [
+      'Content-Type: text/plain; charset=UTF-8',
+      'MIME-Version: 1.0',
+      `To: info@hikobayu.com`,
+      `From: info@hikobayu.com`,
+      `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+      '',
+      bodyText,
+    ];
+    const raw = Buffer.from(mimeLines.join('\r\n'))
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+
+    console.log(`[wholesale-order] 送信完了: ${subject}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[wholesale-order] メール送信エラー:', err.message);
+    res.status(500).json({ ok: false, error: 'send_failed' });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 // --- コンタクト履歴 最新1件取得 ---
