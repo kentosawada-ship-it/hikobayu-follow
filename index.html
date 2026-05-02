@@ -2509,6 +2509,7 @@ function renderPhonebookContent() {
     <div class="pb-bulk-bar">
       <span>選択中：<strong id="pbSelectedCount">0</strong>件</span>
       <button onclick="openPbBulkModal()" class="btn btn-send-html" style="padding:8px 18px;font-size:14px;" id="pbBulkSendBtn" disabled>📨 一斉送信</button>
+      <button onclick="copyBccEmails()" style="background:#fff;border:1px solid #2d7a22;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;color:#2d7a22;font-weight:600;" id="pbBccCopyBtn" disabled>📋 BCC用にメアドをコピー</button>
       <button onclick="clearPbBulkSelection()" style="background:none;border:1px solid #ccc;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;color:#555;">選択解除</button>
     </div>
   ` : '';
@@ -3015,8 +3016,49 @@ function pbBulkToggleCheck(pbIdx, checked) {
 function updatePbBulkBar() {
   const countEl = document.getElementById('pbSelectedCount');
   const sendBtn = document.getElementById('pbBulkSendBtn');
+  const bccBtn  = document.getElementById('pbBccCopyBtn');
   if (countEl) countEl.textContent = phonebookSelected.size;
   if (sendBtn) sendBtn.disabled = phonebookSelected.size === 0;
+  if (bccBtn)  bccBtn.disabled  = phonebookSelected.size === 0;
+}
+
+async function copyBccEmails() {
+  if (phonebookSelected.size === 0) return;
+  const selectedItems = [...phonebookSelected].map(pbIdx => phonebookData[pbIdx]).filter(Boolean);
+
+  const seen = new Set();
+  let copied = 0, skipped = 0;
+  const emails = [];
+  for (const item of selectedItems) {
+    const email = (item.email || '').trim();
+    if (!email) { skipped++; continue; }
+    if (seen.has(email)) { skipped++; continue; }
+    seen.add(email);
+    emails.push(email);
+    copied++;
+  }
+
+  if (emails.length === 0) {
+    showToast('⚠️ コピーできるメアドがありません（全件メアド未登録）', true);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(emails.join(','));
+    const msg = skipped > 0
+      ? `📋 ${copied}件のメアドをコピーしました（${skipped}件スキップ：メアド未登録または重複）`
+      : `📋 ${copied}件のメアドをコピーしました`;
+    showToast(msg);
+  } catch (e) {
+    // フォールバック：input要素経由でコピー
+    const tmp = document.createElement('input');
+    tmp.value = emails.join(',');
+    document.body.appendChild(tmp);
+    tmp.select();
+    document.execCommand('copy');
+    document.body.removeChild(tmp);
+    showToast(`📋 ${copied}件のメアドをコピーしました`);
+  }
 }
 
 function clearPbBulkSelection() {
